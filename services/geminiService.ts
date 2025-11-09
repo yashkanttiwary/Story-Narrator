@@ -131,11 +131,43 @@ const getCoverUrl = async (itemName: string, itemType: 'movie' | 'book', year: s
 
 const getItemDetails = async (itemName: string, year: string | undefined, itemType: 'movie' | 'book', apiKey: string): Promise<MovieDetails | BookDetails> => {
     const ai = new GoogleGenAI({ apiKey });
-    const prompt = `Based on your knowledge, provide a comprehensive set of data for the ${itemType}: "${itemName}"${year ? ` released around ${year}` : ''}. Please find the most popular and well-known entry that matches this title. Fill out all fields in the provided JSON schema as accurately as possible. For fields like ratings or financial data, find the most commonly cited figures. For cast, list the top 6 most prominent actors. If a piece of information is not available, use a null value.`;
+    
+    // Step 1: Use Google Search to get grounded, rich context.
+    const searchPrompt = `
+        Perform a comprehensive Google Search for the ${itemType}: "${itemName}"${year ? ` released around ${year}` : ''}. 
+        Gather all key details including:
+        - For Movies: Full title, release date, director(s), screenplay writer(s), cinematographer(s), producer(s), running time, genres, cast (top 6-8 actors and their characters), IMDb rating, Rotten Tomatoes score, Letterboxd rating, budget, box office, and whether it was adapted from another work. Also find a high-quality, thematic backdrop image URL.
+        - For Books: Full title, author(s), original publication date, publisher, page count, genres, any major awards won, and a high-quality, thematic backdrop image URL.
+        Synthesize this information into a detailed text summary. Prioritize the most well-known and acclaimed version of the item.
+    `;
 
-    const response = await ai.models.generateContent({
+    const searchResponse = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: prompt,
+        contents: searchPrompt,
+        config: {
+            tools: [{ googleSearch: {} }],
+        },
+    });
+
+    const context = searchResponse.text?.trim();
+
+    if (!context || context.length < 50) {
+        throw new Error(`Could not find sufficient information for "${itemName}" using Google Search.`);
+    }
+
+    // Step 2: Use the grounded context to populate the JSON schema.
+    const extractionPrompt = `
+        Based *only* on the following context, extract the information for the ${itemType} "${itemName}" and format it precisely according to the provided JSON schema. Be as accurate as possible. If a piece of information is not available in the context, use a null value. Do not invent or infer information not present in the context.
+
+        CONTEXT:
+        ---
+        ${context}
+        ---
+    `;
+
+    const extractionResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: extractionPrompt,
         config: {
             responseMimeType: "application/json",
             responseSchema: itemType === 'movie' ? movieSchema : bookSchema,
@@ -143,14 +175,14 @@ const getItemDetails = async (itemName: string, year: string | undefined, itemTy
     });
 
     try {
-        const jsonText = response.text?.trim() || '{}';
+        const jsonText = extractionResponse.text?.trim() || '{}';
         if (jsonText === '{}') {
-            throw new Error(`Could not retrieve ${itemType} details. The API returned an empty response.`);
+            throw new Error(`Could not extract ${itemType} details from the search results. The API returned an empty response.`);
         }
         return JSON.parse(jsonText);
     } catch (e) {
-        console.error(`Failed to parse ${itemType} details JSON:`, e, `Raw response: "${response.text}"`);
-        throw new Error(`Could not retrieve ${itemType} details. The format was invalid.`);
+        console.error(`Failed to parse extracted ${itemType} details JSON:`, e, `Raw response: "${extractionResponse.text}"`);
+        throw new Error(`Could not structure the ${itemType} details. The format was invalid.`);
     }
 };
 
