@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import SearchIcon from './icons/SearchIcon';
-import { ItemType } from '../App';
+import { ItemType } from '../types';
+import { ApiContext } from '../contexts/ApiContext';
 
 interface ItemInputFormProps {
   itemName: string;
@@ -9,8 +10,6 @@ interface ItemInputFormProps {
   setYear: (value: string) => void;
   itemType: ItemType;
   setItemType: (value: ItemType) => void;
-  apiKey: string;
-  setApiKey: (value: string) => void;
   handleSubmit: (e: React.FormEvent) => void;
   isLoading: boolean;
 }
@@ -22,12 +21,18 @@ const ItemInputForm: React.FC<ItemInputFormProps> = ({
   setYear,
   itemType,
   setItemType,
-  apiKey,
-  setApiKey,
   handleSubmit,
   isLoading,
 }) => {
-  const placeholderText = itemType === 'movie' ? "Enter movie name (e.g., The Matrix)" : "Enter book title (e.g., Dune)";
+  const { apiKey, setApiKey } = useContext(ApiContext);
+  
+  const placeholders: Record<ItemType, string> = {
+    movie: "Enter movie name (e.g., The Matrix)",
+    book: "Enter book title (e.g., Dune)",
+    series: "Enter series name (e.g., Breaking Bad)",
+    anime: "Enter anime title (e.g., Attack on Titan)",
+  };
+  const placeholderText = placeholders[itemType];
 
   const handleYearChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const numericValue = e.target.value.replace(/[^0-9]/g, '');
@@ -37,8 +42,8 @@ const ItemInputForm: React.FC<ItemInputFormProps> = ({
   return (
     <form onSubmit={handleSubmit} className="w-full max-w-3xl mx-auto">
       <div className="flex justify-center mb-4">
-        <div className="flex items-center bg-black/30 border border-white/20 rounded-xl p-1">
-          {(['movie', 'book'] as ItemType[]).map((type) => (
+        <div className="flex items-center bg-black/30 border border-white/20 rounded-xl p-1 flex-wrap justify-center">
+          {(['movie', 'book', 'series', 'anime'] as ItemType[]).map((type) => (
             <button
               key={type}
               type="button"
@@ -63,14 +68,14 @@ const ItemInputForm: React.FC<ItemInputFormProps> = ({
           required
           aria-required="true"
           disabled={isLoading}
-          maxLength={150}
+          maxLength={100}
         />
         <div className="h-px w-full sm:h-8 sm:w-px bg-white/20" />
         <input
           type="text"
           value={year}
           onChange={handleYearChange}
-          placeholder={itemType === 'movie' ? "Year (Opt)" : "Pub. Year (Opt)"}
+          placeholder={itemType === 'book' ? "Pub. Year (Opt)" : "Year (Opt)"}
           className="sm:w-32 bg-transparent text-white placeholder-gray-400 px-4 py-3 focus:outline-none focus:ring-0 border-none text-left sm:text-center"
           disabled={isLoading}
           maxLength={4}
@@ -80,7 +85,7 @@ const ItemInputForm: React.FC<ItemInputFormProps> = ({
         <button
           type="submit"
           disabled={isLoading || !apiKey.trim() || !itemName.trim()}
-          className="flex-shrink-0 inline-flex items-center justify-center bg-indigo-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-indigo-700 disabled:bg-indigo-500 disabled:cursor-not-allowed transition-all duration-200 sm:ml-2"
+          className="flex-shrink-0 inline-flex items-center justify-center bg-indigo-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-indigo-700 disabled:bg-indigo-500 disabled:cursor-not-allowed transition-all duration-200 sm:ml-2 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-indigo-500"
         >
           {isLoading ? (
             <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

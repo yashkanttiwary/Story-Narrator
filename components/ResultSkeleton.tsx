@@ -7,7 +7,7 @@ const ResultSkeleton: React.FC = () => {
         <div className="inline-block bg-gray-700 h-12 w-40 rounded-lg"></div>
       </div>
 
-      <div className="relative h-64 md:h-80 lg:h-96 rounded-2xl bg-gray-800"></div>
+      <div className="relative h-64 md:h-80 lg:h-96 rounded-2xl bg-gray-700"></div>
       
       <div className="relative px-4 sm:px-6 lg:px-8 -mt-32 md:-mt-40 z-10">
         <div className="flex flex-col md:flex-row gap-8">

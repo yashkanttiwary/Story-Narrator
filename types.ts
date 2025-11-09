@@ -36,6 +36,30 @@ export interface BookDetails {
     awards: string[] | null;
 }
 
+export interface SeriesDetails {
+    title: string;
+    coverUrl: string;
+    backdropUrl: string | null;
+    genres: string[];
+    creator: string | string[];
+    seasons: string;
+    episodes: string;
+    releaseDate: string;
+    network: string | null;
+}
+
+export interface AnimeDetails {
+    title: string;
+    coverUrl: string;
+    backdropUrl: string | null;
+    genres: string[];
+    studio: string | string[];
+    episodes: string;
+    releaseDate: string;
+    director: string | string[];
+}
+
+
 // Narration is now streamed, so it's not part of the initial data object.
 export type ItemData = {
     type: 'movie';
@@ -43,7 +67,15 @@ export type ItemData = {
 } | {
     type: 'book';
     details: BookDetails;
+} | {
+    type: 'series';
+    details: SeriesDetails;
+} | {
+    type: 'anime';
+    details: AnimeDetails;
 };
+
+export type ItemType = 'movie' | 'book' | 'series' | 'anime';
 
 export interface ChatMessage {
   role: 'user' | 'model';

@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { ItemData, MovieDetails, BookDetails } from '../types';
+import React, { useState, useCallback, useRef, useEffect, useContext } from 'react';
+import { ItemData, MovieDetails, BookDetails, SeriesDetails, AnimeDetails, ChatMessage } from '../types';
 import AudioPlayer from './AudioPlayer';
 import DownloadIcon from './icons/DownloadIcon';
 import CopyIcon from './icons/CopyIcon';
@@ -9,6 +9,8 @@ import MarkdownRenderer from './MarkdownRenderer';
 import { getNarrationAudio, getItemNarrationStream } from '../services/geminiService';
 import { decode, decodeAudioData, createWavBlob, AUDIO_SAMPLE_RATE } from '../utils/audioUtils';
 import Loader from './Loader';
+import ChatBox from './ChatBox';
+import { ApiContext } from '../contexts/ApiContext';
 
 
 declare global {
@@ -19,7 +21,6 @@ declare global {
 
 interface ItemResultDisplayProps {
   data: Omit<ItemData, 'narration'>;
-  apiKey: string;
   onNewSearch: () => void;
   onNarrationComplete: () => void;
   initialLoadingMessage: string;
@@ -108,27 +109,31 @@ const sanitizeTextForPdf = (text: string): string => {
   return sanitizedText;
 };
 
-const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey, onNewSearch, onNarrationComplete, initialLoadingMessage }) => {
+const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, onNewSearch, onNarrationComplete, initialLoadingMessage }) => {
   const { type, details } = data;
-  const isMovie = type === 'movie';
-  const movieDetails = isMovie ? details as MovieDetails : null;
-  const bookDetails = !isMovie ? details as BookDetails : null;
+  const { apiKey } = useContext(ApiContext);
 
   const [narration, setNarration] = useState<string>('');
   const [isStreaming, setIsStreaming] = useState(true);
+  const [narrationError, setNarrationError] = useState<string | null>(null);
+  
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
 
   useEffect(() => {
     let active = true;
     const streamNarration = async () => {
+      setNarration('');
+      setNarrationError(null);
       try {
-        const stream = getItemNarrationStream(details.title, details.releaseDate || bookDetails?.publicationDate, type, apiKey);
+        const stream = getItemNarrationStream(details.title, (details as any).releaseDate || (details as any).publicationDate, type, apiKey);
         for await (const chunk of stream) {
           if (!active) return;
           setNarration(prev => prev + chunk);
         }
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Sorry, we couldn't generate the narration at this time.";
         console.error("Narration streaming failed:", error);
-        setNarration("Sorry, we couldn't generate the narration at this time.");
+        if (active) setNarrationError(errorMessage);
       } finally {
         if (active) {
           setIsStreaming(false);
@@ -136,19 +141,31 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey, onN
         }
       }
     };
-    streamNarration();
+    if (apiKey) {
+        streamNarration();
+    }
     return () => { active = false; };
-  }, [data, apiKey, onNarrationComplete, details.title, details.releaseDate, bookDetails?.publicationDate, type]);
+  }, [data, apiKey, onNarrationComplete, details.title, type]);
 
 
-  const year = details.releaseDate || bookDetails?.publicationDate ? new Date(details.releaseDate || bookDetails!.publicationDate).getFullYear() : '';
+  const getYear = (details: ItemData['details']) => {
+    if ('releaseDate' in details && details.releaseDate) {
+        return new Date(details.releaseDate).getFullYear();
+    }
+    if ('publicationDate' in details && details.publicationDate) {
+        return new Date(details.publicationDate).getFullYear();
+    }
+    return '';
+  }
+  const year = getYear(details);
   const coverSrc = details.coverUrl || placeholderCover;
 
   const trailerSearchQuery = encodeURIComponent(`${details.title} ${year} official trailer`);
-  const trailerLink = movieDetails?.trailerUrl || `https://www.youtube.com/results?search_query=${trailerSearchQuery}`;
+  const trailerLink = `https://www.youtube.com/results?search_query=${trailerSearchQuery}`;
   
   const [isCopied, setIsCopied] = useState(false);
   const [isDownloadLoading, setIsDownloadLoading] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
 
   const [audioData, setAudioData] = useState<{ buffer: AudioBuffer; wavBlob: Blob } | null>(null);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
@@ -175,9 +192,10 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey, onN
   }, [cleanupAudio, narration]);
   
   const fetchAndCacheAudio = useCallback(async () => {
-    if (audioData || isStreaming) return audioData;
+    if (audioData || isStreaming || !narration) return audioData;
     
     setIsAudioLoading(true);
+    setAudioError(null);
     try {
         if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
             audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: AUDIO_SAMPLE_RATE });
@@ -195,8 +213,9 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey, onN
         setAudioData(newAudioData);
         return newAudioData;
     } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Sorry, we couldn't generate the audio at this time.";
         console.error("Failed to generate audio:", error);
-        alert("Sorry, we couldn't generate the audio at this time.");
+        setAudioError(errorMessage);
         return null;
     } finally {
         setIsAudioLoading(false);
@@ -249,7 +268,9 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey, onN
 
   const handleDownloadPdf = useCallback(() => {
     if (isStreaming || typeof window.jspdf === 'undefined') {
-      console.error("jsPDF library is not loaded or narration is still streaming.");
+      if (typeof window.jspdf === 'undefined') {
+          alert('PDF generation library is not available.');
+      }
       return;
     }
     const { jsPDF } = window.jspdf;
@@ -310,13 +331,76 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey, onN
   }, [details.title, narration, isStreaming]);
 
   const handleCopy = useCallback(() => {
-    if (isCopied || isStreaming) return;
+    if (isCopied || isStreaming || !narration) return;
     navigator.clipboard.writeText(narration)
       .then(() => {
         setIsCopied(true);
         setTimeout(() => setIsCopied(false), 2500);
       });
   }, [narration, isCopied, isStreaming]);
+  
+  const renderDetails = () => {
+    switch(data.type) {
+      case 'movie':
+        const d = data.details as MovieDetails;
+        return <>
+            <DetailItem label="Director" value={d.director} linkable />
+            <DetailItem label="Screenplay" value={d.screenplay} linkable />
+            <DetailItem label="Cinematography" value={d.cinematography} linkable />
+            <DetailItem label="Producer" value={d.producer} linkable />
+            <DetailItem label="Running Time" value={formatRunningTime(d.runningTime)} />
+            <DetailItem label="Adapted From" value={d.adaptedFrom} />
+            <DetailItem label="Budget" value={d.budget} />
+            <DetailItem label="Box Office" value={d.boxOffice} />
+        </>;
+      case 'book':
+        const b = data.details as BookDetails;
+        return <>
+          <DetailItem label="Author" value={b.author} linkable />
+          <DetailItem label="Publisher" value={b.publisher} />
+          <DetailItem label="Page Count" value={b.pageCount} />
+          <DetailItem label="Awards" value={b.awards} />
+        </>;
+       case 'series':
+         const s = data.details as SeriesDetails;
+         return <>
+            <DetailItem label="Creator" value={s.creator} linkable />
+            <DetailItem label="Seasons" value={s.seasons} />
+            <DetailItem label="Episodes" value={s.episodes} />
+            <DetailItem label="Network" value={s.network} />
+         </>;
+        case 'anime':
+         const a = data.details as AnimeDetails;
+         return <>
+            <DetailItem label="Studio" value={a.studio} linkable />
+            <DetailItem label="Episodes" value={a.episodes} />
+            <DetailItem label="Director" value={a.director} linkable/>
+         </>;
+      default:
+        return null;
+    }
+  }
+  
+  const renderCast = () => {
+      if (data.type === 'movie' && data.details.cast && data.details.cast.length > 0) {
+          return (
+              <div className="md:col-span-2">
+                <h4 className="text-xl font-semibold text-white mb-4">Main Cast</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
+                    {data.details.cast.map((member) => (
+                    <div key={member.actorName}>
+                        <a href={`https://www.google.com/search?q=${encodeURIComponent(member.actorName)}`} target="_blank" rel="noopener noreferrer" className="text-base text-white font-medium hover:text-indigo-300 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-400 rounded">
+                        {member.actorName}
+                        </a>
+                        <p className="text-sm text-gray-400">as {member.characterName}</p>
+                    </div>
+                    ))}
+                </div>
+            </div>
+          )
+      }
+      return null;
+  }
 
   return (
     <div className="w-full max-w-7xl mx-auto animate-fade-in">
@@ -343,14 +427,15 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey, onN
             <div className="relative w-full aspect-[2/3] bg-gray-800 rounded-lg shadow-xl border-4 border-gray-800 overflow-hidden">
                 <img src={coverSrc} alt={`Cover for ${details.title}`} className="absolute top-0 left-0 w-full h-full object-cover" onError={(e) => { const img = e.currentTarget; img.onerror = null; if (img.src !== placeholderCover) { img.src = placeholderCover; } }} />
             </div>
-            <div className="mt-4 flex flex-col gap-3">
-              {isMovie && (
+             <div className="mt-4 flex flex-col gap-3">
+              {type === 'movie' && (
                 <a href={trailerLink} target="_blank" rel="noopener noreferrer" className="w-full inline-flex items-center justify-center bg-red-600 text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-red-700 transition-colors text-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-red-500">
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
                   Watch Trailer
                 </a>
               )}
               <AudioPlayer onPlayPause={handlePlayPause} isPlaying={isAudioPlaying} isLoading={isAudioLoading || isStreaming} />
+              {audioError && <p className="text-xs text-center text-red-400">{audioError}</p>}
             </div>
           </div>
           
@@ -358,11 +443,11 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey, onN
             <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-white tracking-tight">{details.title}</h2>
             {year && <p className="text-xl font-light text-gray-400 mt-1">{year}</p>}
             <div className="flex flex-wrap gap-2 my-4">{details.genres.map(genre => <span key={genre} className="px-3 py-1 bg-gray-700 text-gray-300 text-xs font-medium rounded-full">{genre}</span>)}</div>
-            {isMovie && movieDetails && (
+            {type === 'movie' && (details as MovieDetails).imdbRating && (
               <div className="flex items-center flex-wrap gap-x-6 gap-y-2 my-5 text-sm">
-                  <RatingDisplay label="IMDb" value={movieDetails.imdbRating} />
-                  <RatingDisplay label="Rotten Tomatoes" value={movieDetails.rottenTomatoesRating} />
-                  <RatingDisplay label="Letterboxd" value={movieDetails.letterboxdRating} />
+                  <RatingDisplay label="IMDb" value={(details as MovieDetails).imdbRating} />
+                  <RatingDisplay label="Rotten Tomatoes" value={(details as MovieDetails).rottenTomatoesRating} />
+                  <RatingDisplay label="Letterboxd" value={(details as MovieDetails).letterboxdRating} />
               </div>
             )}
           </div>
@@ -373,20 +458,26 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey, onN
             <div className="flex justify-between items-center border-b-2 border-indigo-500/30 pb-2 mb-4">
               <h3 className="text-2xl font-bold text-indigo-300">AI Narration</h3>
               <div className="flex items-center gap-2">
-                 <button onClick={handleDownloadAudio} disabled={isDownloadLoading || isStreaming} aria-label="Download narration as WAV audio" className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-gray-700/60 hover:bg-gray-700 rounded-md transition-colors text-gray-300 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-indigo-400" title="Download as WAV audio">
+                 <button onClick={handleDownloadAudio} disabled={isDownloadLoading || isStreaming || !narration} aria-label="Download narration as WAV audio" className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-gray-700/60 hover:bg-gray-700 rounded-md transition-colors text-gray-300 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-indigo-400" title="Download as WAV audio">
                   {isDownloadLoading ? <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> : <DownloadIcon className="w-4 h-4" />}
                   <span>Audio</span>
                 </button>
-                <button onClick={handleDownloadPdf} disabled={isStreaming} aria-label="Download narration as PDF" className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-gray-700/60 hover:bg-gray-700 rounded-md transition-colors text-gray-300 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-indigo-400" title="Download as PDF">
+                <button onClick={handleDownloadPdf} disabled={isStreaming || !narration} aria-label="Download narration as PDF" className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-gray-700/60 hover:bg-gray-700 rounded-md transition-colors text-gray-300 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-indigo-400" title="Download as PDF">
                   <DownloadIcon className="w-4 h-4" />
                   <span>PDF</span>
                 </button>
-                <button onClick={handleCopy} disabled={isCopied || isStreaming} aria-label="Copy narration text to clipboard" className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-gray-700/60 hover:bg-gray-700 rounded-md transition-colors text-gray-300 w-28 justify-center disabled:bg-green-600/80 disabled:cursor-default disabled:opacity-100 focus:outline-none focus:ring-2 focus:ring-indigo-400" title="Copy to clipboard">
+                <button onClick={handleCopy} disabled={isCopied || isStreaming || !narration} aria-label="Copy narration text to clipboard" className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-gray-700/60 hover:bg-gray-700 rounded-md transition-colors text-gray-300 w-28 justify-center disabled:bg-green-600/80 disabled:cursor-default disabled:opacity-100 focus:outline-none focus:ring-2 focus:ring-indigo-400" title="Copy to clipboard">
                   {isCopied ? (<><CheckIcon className="w-4 h-4" /><span>Copied!</span></>) : (<><CopyIcon className="w-4 h-4" /><span>Copy Text</span></>)}
                 </button>
               </div>
             </div>
             {isStreaming && !narration && <Loader message={initialLoadingMessage} />}
+            {narrationError && (
+                 <div className="text-center p-4 bg-red-900/50 border border-red-700 rounded-lg">
+                    <p className="font-semibold text-red-300">Narration Failed</p>
+                    <p className="text-red-400 text-sm">{narrationError}</p>
+                </div>
+            )}
             <div className="prose prose-invert max-w-none text-gray-300">
               <MarkdownRenderer text={narration} />
             </div>
@@ -395,42 +486,19 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey, onN
           <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-8">
             <div className="md:col-span-1">
               <h4 className="text-xl font-semibold text-white mb-4">Details</h4>
-              {isMovie && movieDetails ? (
-                <>
-                  <DetailItem label="Director" value={movieDetails.director} linkable />
-                  <DetailItem label="Screenplay" value={movieDetails.screenplay} linkable />
-                  <DetailItem label="Cinematography" value={movieDetails.cinematography} linkable />
-                  <DetailItem label="Producer" value={movieDetails.producer} linkable />
-                  <DetailItem label="Running Time" value={formatRunningTime(movieDetails.runningTime)} />
-                  <DetailItem label="Adapted From" value={movieDetails.adaptedFrom} />
-                  <DetailItem label="Budget" value={movieDetails.budget} />
-                  <DetailItem label="Box Office" value={movieDetails.boxOffice} />
-                </>
-              ) : bookDetails ? (
-                <>
-                  <DetailItem label="Author" value={bookDetails.author} linkable />
-                  <DetailItem label="Publisher" value={bookDetails.publisher} />
-                  <DetailItem label="Page Count" value={bookDetails.pageCount} />
-                  <DetailItem label="Awards" value={bookDetails.awards} />
-                </>
-              ) : null}
+              {renderDetails()}
             </div>
-            {isMovie && movieDetails && movieDetails.cast && movieDetails.cast.length > 0 && (
-                 <div className="md:col-span-2">
-                    <h4 className="text-xl font-semibold text-white mb-4">Main Cast</h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
-                        {movieDetails.cast.map((member) => (
-                        <div key={member.actorName}>
-                            <a href={`https://www.google.com/search?q=${encodeURIComponent(member.actorName)}`} target="_blank" rel="noopener noreferrer" className="text-base text-white font-medium hover:text-indigo-300 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-400 rounded">
-                            {member.actorName}
-                            </a>
-                            <p className="text-sm text-gray-400">as {member.characterName}</p>
-                        </div>
-                        ))}
-                    </div>
-                </div>
-            )}
+            {renderCast()}
           </div>
+          
+          {!isStreaming && narration && !narrationError && (
+            <ChatBox 
+                itemTitle={details.title} 
+                narration={narration}
+                onHistoryChange={setChatHistory}
+            />
+          )}
+
         </div>
       </div>
     </div>

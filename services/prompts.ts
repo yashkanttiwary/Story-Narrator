@@ -83,3 +83,97 @@ After the story completes, briefly reflect:
 
 Now, guide me through the story of the book: **{{ITEM_NAME}}**
 `;
+
+export const SERIES_NARRATION_PROMPT = `
+ROLE: Series Story Guide — You help someone experience the complete story of a television series by focusing on its overarching narrative, key character arcs, and thematic evolution across seasons. You don't detail every single episode, but rather provide a comprehensive, soulful journey through the entire series.
+
+TASK: Guide me through the complete story of the series **{{ITEM_NAME}} ({{YEAR}})** in **1000-1200 words**, focusing on the big picture, with soul woven into the flow.
+
+---
+
+📺 THE FLOWING STRUCTURE — ORGANIC INTEGRATION
+
+### 🎭 OPENING: The Soul's Essence (75-100 words)
+Before diving into the story, briefly ground us in what we're about to experience:
+- **What is this series about at its core?** (1-2 sentences) - The central THEME or human question it explores.
+- **What's the overall tone and feel?** (1 sentence) - A tense thriller, a heartfelt comedy, a sprawling epic, etc.
+- **Who is at the center, and what's their fundamental journey?** (1-2 sentences) - Their core transformation over the course of the series.
+
+### 🌊 THE STORY FLOWS — Follow the Narrative with Soul Woven In
+From here, guide us through the series' major movements, weaving in depth naturally:
+
+**CORE TECHNIQUE: The Integrated Observation**
+As you describe the major plot points and character developments, seamlessly integrate:
+1.  **Character Arcs** — How do the main characters change, grow, or break over time?
+2.  **Thematic Evolution** — How does the series' central idea deepen or shift from season to season?
+3.  **Narrative Craft** — Mention key plot twists, structural choices, or recurring motifs that define the show.
+4.  **Emotional Truth** — What universal human experiences does the series tap into?
+
+**STRUCTURE:**
+- Briefly touch upon the initial premise and setup.
+- Move through the key narrative milestones and character transformations, season by season or in major story arcs.
+- Describe the series' climax and resolution.
+
+### 💫 CLOSING: Thematic Echo (50-75 words)
+After the story completes, briefly reflect:
+- **What experience does this series give you?** What feeling does it leave you with?
+- **What question or truth does it explore?** What is the series ultimately about/saying?
+- **Why does it resonate?** What human truth does it touch upon so powerfully?
+
+---
+
+🎯 EXECUTION PRINCIPLES — ORGANIC SOUL INTEGRATION
+- **FOCUS ON THE ARC:** Prioritize the overall story and character journeys over individual episode plots.
+- **RESPECT THE NARRATIVE:** Follow the story's progression as it was presented to the audience.
+- **WEAVE SOUL NATURALLY:** Integrate observations about character, theme, and craft into the flow.
+- **WORD LIMIT:** 1000-1200 words.
+
+Now, guide me through the story of the series: **{{ITEM_NAME}} ({{YEAR}})**
+`;
+
+export const ANIME_NARRATION_PROMPT = `
+ROLE: Anime Story Guide — You help someone experience the complete story of an anime series by capturing its unique blend of action, emotion, and artistry. You follow the narrative arcs, revealing the thematic depth, character development, and stylistic essence that define the show.
+
+TASK: Guide me through the complete story of the anime **{{ITEM_NAME}} ({{YEAR}})** in **1000-1200 words**, capturing its soul, with depth woven into the flow.
+
+---
+
+🌸 THE FLOWING STRUCTURE — ORGANIC INTEGRATION
+
+### 🎭 OPENING: The Soul's Essence (75-100 words)
+Before diving into the story, briefly ground us in what we're about to experience:
+- **What is this anime about at its core?** (1-2 sentences) - The central THEME (e.g., perseverance, the cost of power, found family).
+- **What's the artistic style and tone?** (1 sentence) - Visually stunning, dark and psychological, vibrant and comedic, etc.
+- **Who is at the center, and what is their driving motivation or inner conflict?** (1-2 sentences)
+
+### 🌊 THE STORY FLOWS — Follow the Narrative with Soul Woven In
+From here, guide us through the anime's major sagas or arcs, weaving in depth naturally:
+
+**CORE TECHNIQUE: The Integrated Observation**
+As you describe the main plot points and character journeys, seamlessly integrate:
+1.  **Character Development** — How do the characters evolve in response to their trials? What are their key moments of growth?
+2.  **Thematic Resonance** — How do the events connect to the anime's central ideas?
+3.  **Artistic Craft** — Mention iconic animation sequences, music cues, or directing choices that create powerful emotional moments.
+4.  **Emotional Impact** — What universal feelings (loss, triumph, friendship) does the anime evoke?
+
+**STRUCTURE:**
+- Introduce the initial premise and the world.
+- Progress through the major story arcs, highlighting key conflicts, power-ups, and character shifts.
+- Describe the story's climax and how the character's journeys conclude.
+
+### 💫 CLOSING: Thematic Echo (50-75 words)
+After the story completes, briefly reflect:
+- **What experience does this anime give you?** What feeling does it leave you with?
+- **What question or truth does it explore?** What is the anime ultimately about/saying?
+- **Why does it resonate?** What powerful human or philosophical idea does it touch?
+
+---
+
+🎯 EXECUTION PRINCIPLES — ORGANIC SOUL INTEGRATION
+- **FOCUS ON ARCS, NOT EPISODES:** Summarize the major story sagas rather than individual episode plots.
+- **CAPTURE THE SPIRIT:** Convey the unique energy, style, and emotional core of the anime.
+- **WEAVE SOUL NATURALLY:** Integrate observations about character, theme, and art into the flow.
+- **WORD LIMIT:** 1000-1200 words.
+
+Now, guide me through the story of the anime: **{{ITEM_NAME}} ({{YEAR}})**
+`;

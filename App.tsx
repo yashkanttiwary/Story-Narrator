@@ -1,84 +1,90 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { ItemData, BrowseItem } from './types';
-import { getItemData, validateApiKey, getBrowseList } from './services/geminiService';
+import React, { useState, useCallback, useEffect, useContext, FC } from 'react';
+import { ItemData, BrowseItem, ItemType } from './types';
+import { getItemData, getInitialBrowseLists, getBrowseList } from './services/geminiService';
+import { ApiContext } from './contexts/ApiContext';
 import ItemInputForm from './components/ItemInputForm';
 import ItemResultDisplay from './components/ItemResultDisplay';
-import Loader from './components/Loader';
-import BrowseSection from './components/BrowseSection';
 import ResultSkeleton from './components/ResultSkeleton';
+import BrowseSection from './components/BrowseSection';
 
-export type ItemType = 'movie' | 'book';
+const useDebounce = (value: string, delay: number): string => {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+  return debouncedValue;
+};
 
-const App: React.FC = () => {
+
+const App: FC = () => {
   const [itemName, setItemName] = useState<string>('');
   const [year, setYear] = useState<string>('');
   const [itemType, setItemType] = useState<ItemType>('movie');
-  const [apiKey, setApiKey] = useState<string>(() => sessionStorage.getItem('gemini-api-key') || '');
+  const { apiKey, setApiKey } = useContext(ApiContext);
+  const debouncedApiKey = useDebounce(apiKey, 500);
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loadingMessage, setLoadingMessage] = useState<string>('');
   const [itemData, setItemData] = useState<ItemData | null>(null);
   const [error, setError] = useState<string | null>(null);
   
-  const [browseLists, setBrowseLists] = useState<{ movie: BrowseItem[], book: BrowseItem[] }>({ movie: [], book: [] });
+  const [browseLists, setBrowseLists] = useState<Record<ItemType, BrowseItem[]>>({ movie: [], book: [], series: [], anime: [] });
   const [isBrowseLoading, setIsBrowseLoading] = useState(false);
+  const [isMoreLoading, setIsMoreLoading] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState<{ movie: boolean, book: boolean }>({ movie: true, book: true });
+  const [hasMore, setHasMore] = useState<Record<ItemType, boolean>>({ movie: true, book: true, series: true, anime: true });
+  const [initialBrowseFetched, setInitialBrowseFetched] = useState(false);
 
   useEffect(() => {
-    if (apiKey) {
-      sessionStorage.setItem('gemini-api-key', apiKey);
-    } else {
-      sessionStorage.removeItem('gemini-api-key');
-    }
-  }, [apiKey]);
-
-  const fetchInitialBrowseData = useCallback(async (currentApiKey: string, currentItemType: ItemType) => {
-    if (!currentApiKey) {
-        setBrowseLists({ movie: [], book: [] });
-        setHasMore({ movie: true, book: true });
-        setBrowseError('Enter an API key to browse titles.');
-        return;
-    }
-
-    setIsBrowseLoading(true);
-    setBrowseError(null);
-    try {
-        const isValid = await validateApiKey(currentApiKey);
-        if (!isValid) {
-            setBrowseError('Your API key is invalid.');
-            setBrowseLists({ movie: [], book: [] });
+    const fetchAllInitialData = async (currentApiKey: string) => {
+        if (!currentApiKey || initialBrowseFetched) {
+            if (!currentApiKey) {
+                setBrowseLists({ movie: [], book: [], series: [], anime: [] });
+                setHasMore({ movie: true, book: true, series: true, anime: true });
+                setBrowseError('Enter an API key to browse titles.');
+                setInitialBrowseFetched(false);
+            }
             return;
         }
 
-        setBrowseLists(prev => ({...prev, [currentItemType]: []}));
-        setHasMore(prev => ({...prev, [currentItemType]: true}));
-
-        const list = await getBrowseList(currentItemType, currentApiKey, []);
-        if (list.length < 12) {
-            setHasMore(prev => ({ ...prev, [currentItemType]: false }));
+        setIsBrowseLoading(true);
+        setBrowseError(null);
+        try {
+            const allLists = await getInitialBrowseLists(currentApiKey, 12);
+            setBrowseLists(allLists);
+            
+            const newHasMore: Record<ItemType, boolean> = { movie: true, book: true, series: true, anime: true };
+            (Object.keys(allLists) as ItemType[]).forEach(key => {
+                if (allLists[key].length < 12) {
+                    newHasMore[key] = false;
+                }
+            });
+            setHasMore(newHasMore);
+            setInitialBrowseFetched(true);
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : `Could not load popular titles.`;
+            setBrowseError(errorMessage);
+            setBrowseLists({ movie: [], book: [], series: [], anime: [] });
+        } finally {
+            setIsBrowseLoading(false);
         }
-        if (list.length === 0) {
-           setBrowseError(`Could not load popular ${currentItemType}s at this time.`);
-        }
-        setBrowseLists(prev => ({ ...prev, [currentItemType]: list }));
-    } catch (err) {
-        setBrowseError(`Could not load popular ${currentItemType}s.`);
-    } finally {
-        setIsBrowseLoading(false);
-    }
-  }, []);
+    };
 
-  useEffect(() => {
-    fetchInitialBrowseData(apiKey, itemType);
-  }, [apiKey, itemType, fetchInitialBrowseData]);
+    fetchAllInitialData(debouncedApiKey);
+  }, [debouncedApiKey, initialBrowseFetched]);
 
   const handleLoadMore = useCallback(async () => {
-    if (isBrowseLoading || !hasMore[itemType] || !apiKey) return;
+    if (isMoreLoading || !hasMore[itemType] || !debouncedApiKey) return;
 
-    setIsBrowseLoading(true);
+    setIsMoreLoading(true);
     try {
         const existingTitles = browseLists[itemType].map(item => item.title);
-        const list = await getBrowseList(itemType, apiKey, existingTitles);
+        const list = await getBrowseList(itemType, debouncedApiKey, existingTitles, 12);
 
         if (list.length < 12) {
             setHasMore(prev => ({ ...prev, [itemType]: false }));
@@ -88,11 +94,12 @@ const App: React.FC = () => {
         setBrowseLists(prev => ({ ...prev, [itemType]: [...prev[itemType], ...newItems] }));
         
     } catch (err) {
-        setBrowseError(`Could not load more ${itemType}s.`);
+       // Silently fail on load more to not disrupt UX
+       console.error(`Could not load more ${itemType}s.`, err);
     } finally {
-        setIsBrowseLoading(false);
+        setIsMoreLoading(false);
     }
-  }, [isBrowseLoading, hasMore, itemType, apiKey, browseLists]);
+  }, [isMoreLoading, hasMore, itemType, debouncedApiKey, browseLists]);
 
   const handleBrowseSelect = useCallback((title: string, selectedYear: string) => {
     setItemName(title);
@@ -105,6 +112,8 @@ const App: React.FC = () => {
     setError(null);
     setItemName('');
     setYear('');
+    setIsLoading(false);
+    setLoadingMessage('');
   }, []);
 
   const handleItemTypeChange = useCallback((newType: ItemType) => {
@@ -116,41 +125,53 @@ const App: React.FC = () => {
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+
     if (!apiKey.trim()) {
       setError(`Please enter your Google AI API key.`);
       return;
     }
-    if (!itemName.trim()) {
+
+    const trimmedItemName = itemName.trim();
+    if (!trimmedItemName) {
       setError(`Please enter a ${itemType} name.`);
       return;
     }
-     if (itemName.trim().length > 150) {
-      setError(`The ${itemType} title is too long. Please keep it under 150 characters.`);
+    
+    // C-04: Basic sanitization to prevent sending HTML-like structures to the model.
+    if (/<|>/g.test(trimmedItemName)) {
+        setError(`Title cannot contain special characters like '<' or '>'.`);
+        return;
+    }
+
+    // C-01: Title length validation.
+    if (trimmedItemName.length > 100) {
+      setError(`The ${itemType} title is too long. Please keep it under 100 characters.`);
+      return;
+    }
+
+    // C-02 & H-01: Year validation.
+    const trimmedYear = year.trim();
+    if (trimmedYear && !/^\d{4}$/.test(trimmedYear)) {
+      setError(`Please enter a valid 4-digit year or leave it blank.`);
       return;
     }
     
     setIsLoading(true);
     setLoadingMessage('Validating API Key...');
-    setError(null);
     setItemData(null);
 
     try {
-      const isValid = await validateApiKey(apiKey);
-      if (!isValid) {
-        throw new Error('Invalid API Key. Please check your key from Google AI Studio and try again.');
-      }
-
-      setLoadingMessage(`Finding details for ${itemName}...`);
-      const data = await getItemData(itemName, year, itemType, apiKey);
+      // Let getItemData handle validation implicitly to save an API call.
+      setLoadingMessage(`Finding details for ${trimmedItemName}...`);
+      const data = await getItemData(trimmedItemName, trimmedYear, itemType, apiKey);
       setItemData(data);
-      setLoadingMessage('The AI is writing your narration...'); // Message for streaming phase
+      setLoadingMessage('The AI is writing your narration...');
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-      // Ensure error message is specific to the current item type
-      setError(errorMessage.replace(/movie|book/gi, itemType));
-      setIsLoading(false); // Stop loading on detail fetch error
+      setError(errorMessage.replace(/movie|book|series|anime/gi, itemType));
+      setIsLoading(false); 
     } 
-    // `isLoading` is managed by ItemResultDisplay during streaming phase
   }, [itemName, year, itemType, apiKey]);
 
   const handleNarrationComplete = () => {
@@ -189,8 +210,6 @@ const App: React.FC = () => {
                   setYear={setYear}
                   itemType={itemType}
                   setItemType={handleItemTypeChange}
-                  apiKey={apiKey}
-                  setApiKey={setApiKey}
                   handleSubmit={handleSubmit}
                   isLoading={isLoading}
                 />
@@ -199,8 +218,8 @@ const App: React.FC = () => {
               <section className="my-10">
                  <BrowseSection 
                     list={browseLists[itemType]}
-                    isLoading={isBrowseLoading && browseLists[itemType].length === 0}
-                    isMoreLoading={isBrowseLoading && browseLists[itemType].length > 0}
+                    isLoading={isBrowseLoading}
+                    isMoreLoading={isMoreLoading}
                     error={browseError}
                     onSelectItem={handleBrowseSelect}
                     itemType={itemType}
@@ -219,7 +238,7 @@ const App: React.FC = () => {
                 <p className="text-red-300">{error}</p>
               </div>
             )}
-            {itemData && <ItemResultDisplay data={itemData} apiKey={apiKey} onNewSearch={handleNewSearch} onNarrationComplete={handleNarrationComplete} initialLoadingMessage={loadingMessage} />}
+            {itemData && <ItemResultDisplay data={itemData} onNewSearch={handleNewSearch} onNarrationComplete={handleNarrationComplete} initialLoadingMessage={loadingMessage} />}
           </section>
         </main>
         <footer className="text-center py-6 text-gray-500 text-sm">

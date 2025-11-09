@@ -13,7 +13,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ onPlayPause, isPlaying, isLoa
     <button
       onClick={onPlayPause}
       disabled={isLoading}
-      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 disabled:bg-indigo-400 disabled:cursor-wait transition-colors text-sm"
+      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 disabled:bg-indigo-400 disabled:cursor-wait transition-colors text-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-indigo-500"
       aria-label={isPlaying ? "Pause narration" : "Play narration"}
     >
       {isLoading ? (

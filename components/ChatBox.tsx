@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, useContext } from 'react';
 import { GoogleGenAI, Chat, LiveServerMessage, Blob, Modality } from "@google/genai";
 import { ChatMessage } from '../types';
 import { encode } from '../utils/audioUtils';
@@ -6,12 +6,12 @@ import MicrophoneIcon from './icons/MicrophoneIcon';
 import SendIcon from './icons/SendIcon';
 import StopIcon from './icons/StopIcon';
 import MarkdownRenderer from './MarkdownRenderer';
+import { ApiContext } from '../contexts/ApiContext';
 
 interface ChatBoxProps {
     itemTitle: string;
     narration: string;
     onHistoryChange: (history: ChatMessage[]) => void;
-    apiKey: string;
 }
 
 const sanitizeInput = (text: string): string => {
@@ -20,7 +20,8 @@ const sanitizeInput = (text: string): string => {
   return div.innerHTML;
 };
 
-const ChatBox: React.FC<ChatBoxProps> = ({ itemTitle, narration, onHistoryChange, apiKey }) => {
+const ChatBox: React.FC<ChatBoxProps> = ({ itemTitle, narration, onHistoryChange }) => {
+    const { apiKey } = useContext(ApiContext);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -57,10 +58,11 @@ const ChatBox: React.FC<ChatBoxProps> = ({ itemTitle, narration, onHistoryChange
     }, []);
 
     useEffect(() => {
+        const truncatedNarration = narration.length > 8000 ? narration.substring(0, 8000) + '...' : narration;
         const systemInstruction = `You are a helpful and insightful assistant. The user has just finished reading an AI-generated narration for the item titled "${itemTitle}". The full narration is provided below for your context. Your task is to answer any follow-up questions the user has about this item, based on the narration and your general knowledge. Be conversational and engaging.
 
 --- NARRATION CONTEXT ---
-${narration}
+${truncatedNarration}
 --- END CONTEXT ---`;
 
         chatRef.current = ai.chats.create({
@@ -81,7 +83,7 @@ ${narration}
         const sanitizedText = sanitizeInput(input.trim());
         if (!sanitizedText || !chatRef.current) return;
         
-        if (isRecording) { // Fix for H02
+        if (isRecording) {
             stopRecording();
         }
 

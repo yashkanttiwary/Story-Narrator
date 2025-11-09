@@ -1,7 +1,7 @@
-import React, { useRef, useCallback } from 'react';
+import React from 'react';
 import { BrowseItem } from '../types';
 import BrowseItemCard from './BrowseItemCard';
-import { ItemType } from '../App';
+import { ItemType } from '../types';
 
 interface BrowseSectionProps {
   list: BrowseItem[];
@@ -15,24 +15,13 @@ interface BrowseSectionProps {
 }
 
 const BrowseSection: React.FC<BrowseSectionProps> = ({ list, isLoading, isMoreLoading, error, onSelectItem, itemType, onLoadMore, hasMore }) => {
-  const observer = useRef<IntersectionObserver>();
-  const sentinelRef = useCallback(node => {
-      if (isLoading || isMoreLoading) return;
-      if (observer.current) observer.current.disconnect();
-      observer.current = new IntersectionObserver(entries => {
-          if (entries[0].isIntersecting && hasMore) {
-              onLoadMore();
-          }
-      }, { threshold: 1.0 });
-      if (node) observer.current.observe(node);
-  }, [isLoading, isMoreLoading, hasMore, onLoadMore]);
 
   const renderContent = () => {
     if (isLoading) {
       return (
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-4 sm:gap-6">
           {Array.from({ length: 12 }).map((_, index) => (
-             <div key={index} className="aspect-[2/3] bg-gray-800 rounded-lg animate-pulse"></div>
+             <div key={index} className="aspect-[2/3] bg-gray-700 rounded-lg animate-pulse"></div>
           ))}
         </div>
       );
@@ -48,7 +37,6 @@ const BrowseSection: React.FC<BrowseSectionProps> = ({ list, isLoading, isMoreLo
     
     if (list.length > 0) {
       return (
-        <>
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-4 sm:gap-6">
             {list.map((item) => (
               <BrowseItemCard
@@ -58,8 +46,14 @@ const BrowseSection: React.FC<BrowseSectionProps> = ({ list, isLoading, isMoreLo
               />
             ))}
           </div>
-          <div ref={sentinelRef} style={{ height: '1px' }} /> 
-        </>
+      );
+    }
+
+    if (!isLoading && !error) {
+      return (
+        <div className="text-center p-6 bg-gray-800/50 rounded-lg">
+          <p className="text-gray-400">No popular {itemType}s to display at the moment.</p>
+        </div>
       );
     }
 
@@ -73,14 +67,24 @@ const BrowseSection: React.FC<BrowseSectionProps> = ({ list, isLoading, isMoreLo
         <div className="flex-grow h-px bg-indigo-500/30"></div>
       </div>
       {renderContent()}
-      {isMoreLoading && (
-          <div className="flex justify-center items-center h-24">
-              <div className="w-12 h-12 border-4 border-dashed rounded-full animate-spin border-indigo-400"></div>
-          </div>
-      )}
-      {!hasMore && list.length > 0 && !isMoreLoading && (
-          <p className="text-center text-gray-500 mt-8">You've reached the end of the list!</p>
-      )}
+
+      <div className="text-center mt-8">
+        {isMoreLoading ? (
+            <div className="flex justify-center items-center h-12">
+                <div className="w-12 h-12 border-4 border-dashed rounded-full animate-spin border-indigo-400"></div>
+            </div>
+        ) : hasMore && list.length > 0 && !error ? (
+            <button
+              onClick={onLoadMore}
+              disabled={isMoreLoading}
+              className="bg-indigo-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-indigo-700 disabled:bg-indigo-500 disabled:cursor-not-allowed transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-indigo-500"
+            >
+              Load More
+            </button>
+        ) : !hasMore && list.length > 0 && !error ? (
+          <p className="text-gray-500">You've reached the end of the list!</p>
+        ) : null}
+      </div>
     </div>
   );
 };
