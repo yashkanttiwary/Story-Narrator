@@ -43,14 +43,19 @@ const App: React.FC = () => {
 
   return (
     <div 
-      className="min-h-screen bg-gray-950 text-white font-sans bg-cover bg-center bg-fixed"
-      style={{ backgroundImage: `url('https://images.unsplash.com/photo-1536440136628-849c177e76a1?q=80&w=2250&auto=format&fit=crop')` }}
+      className="min-h-screen text-white font-sans"
+      style={{
+        backgroundImage: `url('https://images.pexels.com/photos/1209843/pexels-photo-1209843.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2')`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center center',
+        backgroundAttachment: 'fixed',
+      }}
     >
-      <div className="min-h-screen bg-black/70 backdrop-blur-sm">
+      <div className="min-h-screen w-full bg-gray-950/80 backdrop-blur-sm">
         <main className="container mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">
           <header className="text-center my-8 md:my-16 transition-all duration-500">
-            <h1 className="text-4xl sm:text-6xl font-bold tracking-tighter text-white">
-              Universal Story Narrator
+            <h1 className="text-4xl sm:text-6xl font-bold tracking-tighter text-white bg-gradient-to-r from-indigo-400 to-purple-400 text-transparent bg-clip-text">
+              What A Scene
             </h1>
             <p className="text-lg md:text-xl text-gray-300 max-w-3xl mx-auto mt-6">
               Experience any story, from screen to page. Enter a title and your API key to begin a unique, soul-deep narration.
