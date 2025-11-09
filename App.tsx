@@ -1,111 +1,21 @@
-import React, { useState, useCallback, useEffect, useContext, FC } from 'react';
-import { ItemData, BrowseItem, ItemType } from './types';
-import { getItemData, getInitialBrowseLists, getBrowseList } from './services/geminiService';
+import React, { useState, useCallback, useContext, FC } from 'react';
+import { ItemData, ItemType } from './types';
+import { getItemData } from './services/geminiService';
 import { ApiContext } from './contexts/ApiContext';
 import ItemInputForm from './components/ItemInputForm';
 import ItemResultDisplay from './components/ItemResultDisplay';
 import ResultSkeleton from './components/ResultSkeleton';
-import BrowseSection from './components/BrowseSection';
-
-const useDebounce = (value: string, delay: number): string => {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
-    return () => {
-      clearTimeout(handler);
-    };
-  }, [value, delay]);
-  return debouncedValue;
-};
-
 
 const App: FC = () => {
   const [itemName, setItemName] = useState<string>('');
   const [year, setYear] = useState<string>('');
   const [itemType, setItemType] = useState<ItemType>('movie');
-  const { apiKey, setApiKey } = useContext(ApiContext);
-  const debouncedApiKey = useDebounce(apiKey, 500);
+  const { apiKey } = useContext(ApiContext);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loadingMessage, setLoadingMessage] = useState<string>('');
   const [itemData, setItemData] = useState<ItemData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
-  const [browseLists, setBrowseLists] = useState<Record<ItemType, BrowseItem[]>>({ movie: [], book: [], series: [], anime: [] });
-  const [isBrowseLoading, setIsBrowseLoading] = useState(false);
-  const [isMoreLoading, setIsMoreLoading] = useState(false);
-  const [browseError, setBrowseError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState<Record<ItemType, boolean>>({ movie: true, book: true, series: true, anime: true });
-  const [initialBrowseFetched, setInitialBrowseFetched] = useState(false);
-
-  useEffect(() => {
-    const fetchAllInitialData = async (currentApiKey: string) => {
-        if (!currentApiKey || initialBrowseFetched) {
-            if (!currentApiKey) {
-                setBrowseLists({ movie: [], book: [], series: [], anime: [] });
-                setHasMore({ movie: true, book: true, series: true, anime: true });
-                setBrowseError('Enter an API key to browse titles.');
-                setInitialBrowseFetched(false);
-            }
-            return;
-        }
-
-        setIsBrowseLoading(true);
-        setBrowseError(null);
-        try {
-            const allLists = await getInitialBrowseLists(currentApiKey, 12);
-            setBrowseLists(allLists);
-            
-            const newHasMore: Record<ItemType, boolean> = { movie: true, book: true, series: true, anime: true };
-            (Object.keys(allLists) as ItemType[]).forEach(key => {
-                if (allLists[key].length < 12) {
-                    newHasMore[key] = false;
-                }
-            });
-            setHasMore(newHasMore);
-            setInitialBrowseFetched(true);
-        } catch (err) {
-            const errorMessage = err instanceof Error ? err.message : `Could not load popular titles.`;
-            setBrowseError(errorMessage);
-            setBrowseLists({ movie: [], book: [], series: [], anime: [] });
-        } finally {
-            setIsBrowseLoading(false);
-        }
-    };
-
-    fetchAllInitialData(debouncedApiKey);
-  }, [debouncedApiKey, initialBrowseFetched]);
-
-  const handleLoadMore = useCallback(async () => {
-    if (isMoreLoading || !hasMore[itemType] || !debouncedApiKey) return;
-
-    setIsMoreLoading(true);
-    try {
-        const existingTitles = browseLists[itemType].map(item => item.title);
-        const list = await getBrowseList(itemType, debouncedApiKey, existingTitles, 12);
-
-        if (list.length < 12) {
-            setHasMore(prev => ({ ...prev, [itemType]: false }));
-        }
-        
-        const newItems = list.filter(newItem => !existingTitles.includes(newItem.title));
-        setBrowseLists(prev => ({ ...prev, [itemType]: [...prev[itemType], ...newItems] }));
-        
-    } catch (err) {
-       // Silently fail on load more to not disrupt UX
-       console.error(`Could not load more ${itemType}s.`, err);
-    } finally {
-        setIsMoreLoading(false);
-    }
-  }, [isMoreLoading, hasMore, itemType, debouncedApiKey, browseLists]);
-
-  const handleBrowseSelect = useCallback((title: string, selectedYear: string) => {
-    setItemName(title);
-    setYear(selectedYear);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, []);
 
   const handleNewSearch = useCallback(() => {
     setItemData(null);
@@ -212,19 +122,6 @@ const App: FC = () => {
                   setItemType={handleItemTypeChange}
                   handleSubmit={handleSubmit}
                   isLoading={isLoading}
-                />
-              </section>
-
-              <section className="my-10">
-                 <BrowseSection 
-                    list={browseLists[itemType]}
-                    isLoading={isBrowseLoading}
-                    isMoreLoading={isMoreLoading}
-                    error={browseError}
-                    onSelectItem={handleBrowseSelect}
-                    itemType={itemType}
-                    onLoadMore={handleLoadMore}
-                    hasMore={hasMore[itemType]}
                 />
               </section>
             </>

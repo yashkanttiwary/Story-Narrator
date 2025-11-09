@@ -59,6 +59,13 @@ export interface AnimeDetails {
     director: string | string[];
 }
 
+// FIX: Add missing BrowseItem interface
+export interface BrowseItem {
+  title: string;
+  year: string;
+  coverUrl: string | null;
+}
+
 
 // Narration is now streamed, so it's not part of the initial data object.
 export type ItemData = {
@@ -80,10 +87,4 @@ export type ItemType = 'movie' | 'book' | 'series' | 'anime';
 export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
-}
-
-export interface BrowseItem {
-  title: string;
-  year: string;
-  coverUrl: string;
 }

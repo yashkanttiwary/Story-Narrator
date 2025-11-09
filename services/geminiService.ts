@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import { MovieDetails, BookDetails, SeriesDetails, AnimeDetails, ItemData, BrowseItem, ItemType } from '../types';
+import { MovieDetails, BookDetails, SeriesDetails, AnimeDetails, ItemData, ItemType } from '../types';
 import { MOVIE_NARRATION_PROMPT, BOOK_NARRATION_PROMPT, SERIES_NARRATION_PROMPT, ANIME_NARRATION_PROMPT } from './prompts';
 
 const aiClientCache = new Map<string, GoogleGenAI>();
@@ -126,99 +126,12 @@ const animeSchema = {
     required: ['title', 'genres', 'studio', 'episodes', 'releaseDate'],
 };
 
-
-const browseItemSchema = {
-    type: Type.OBJECT,
-    properties: {
-        title: { type: Type.STRING },
-        year: { type: Type.STRING, description: "The release or publication year as a string." },
-        coverUrl: { type: Type.STRING, nullable: true, description: "A high-quality, publicly accessible direct image URL for the cover/poster." }
-    },
-    required: ['title', 'year']
-};
-
-const browseListSchema = { type: Type.ARRAY, items: browseItemSchema };
-
-const multiBrowseListSchema = {
-    type: Type.OBJECT,
-    properties: {
-        movie: { type: Type.ARRAY, items: browseItemSchema },
-        book: { type: Type.ARRAY, items: browseItemSchema },
-        series: { type: Type.ARRAY, items: browseItemSchema },
-        anime: { type: Type.ARRAY, items: browseItemSchema }
-    },
-    required: ['movie', 'book', 'series', 'anime']
-};
-
-export const getInitialBrowseLists = async (apiKey: string, count: number = 12): Promise<Record<ItemType, BrowseItem[]>> => {
-    const ai = getAiClient(apiKey);
-    const prompt = `
-        List ${count} popular and critically acclaimed items for each of the following categories: movie, book, series, and anime.
-        For each item, provide its title, release/publication year, and a valid, publicly accessible URL for its cover image if available.
-        They should be a mix of recent hits and timeless classics.
-        Respond strictly in the JSON format defined by the schema.
-    `;
-
-    try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: multiBrowseListSchema,
-            },
-        });
-        const jsonText = response.text?.trim() || '{}';
-        const parsedJson = JSON.parse(jsonText);
-        const allCategories: Record<ItemType, BrowseItem[]> = {
-            movie: parsedJson.movie || [],
-            book: parsedJson.book || [],
-            series: parsedJson.series || [],
-            anime: parsedJson.anime || [],
-        };
-        return allCategories;
-    } catch (error) {
-        console.error(`Error fetching initial browse lists:`, error);
-        throw new Error(parseGoogleGenAIError(error));
-    }
-};
-
 const getSchemaForItemType = (itemType: ItemType) => {
     switch (itemType) {
         case 'movie': return movieSchema;
         case 'book': return bookSchema;
         case 'series': return seriesSchema;
         case 'anime': return animeSchema;
-    }
-};
-
-export const getBrowseList = async (itemType: ItemType, apiKey: string, existingTitles: string[], count: number = 8): Promise<BrowseItem[]> => {
-    const ai = getAiClient(apiKey);
-    const avoidClause = existingTitles.length > 0
-        ? ` IMPORTANT: Do not include any of the following titles in your response: ${existingTitles.join(', ')}.`
-        : '';
-
-    const prompt = `
-        List ${count} popular and critically acclaimed ${itemType}s that are not on the provided exclusion list. They should be a mix of recent hits and timeless classics.
-        ${avoidClause}
-        For each ${itemType}, provide its title and release/publication year. Also provide a valid, publicly accessible URL for its cover image, if one is readily available.
-        Respond strictly in the JSON format defined by the schema. If you cannot find ${count} new and distinct titles, return as many as you can find.
-    `;
-    
-    try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: browseListSchema,
-            },
-        });
-        const jsonText = response.text?.trim() || '[]';
-        return JSON.parse(jsonText);
-    } catch (error) {
-        console.error(`Error fetching browse list for ${itemType}:`, error);
-        throw new Error(parseGoogleGenAIError(error));
     }
 };
 
