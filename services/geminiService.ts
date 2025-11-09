@@ -83,20 +83,58 @@ const getCoverUrl = async (itemName: string, itemType: 'movie' | 'book', year: s
 const getItemDetails = async (itemName: string, year: string | undefined, itemType: 'movie' | 'book', apiKey: string): Promise<MovieDetails | BookDetails> => {
     const ai = new GoogleGenAI({ apiKey });
     const moviePrompt = `
-    TASK: Become a meticulous movie data fact-checker for "${itemName}" (${year || 'any year'}).
+    TASK: You are a movie data API. Your sole purpose is to retrieve factual data for a given movie and return it as a valid JSON object.
+    
     INSTRUCTIONS:
-    1.  **Primary Sources**: Use Google Search to find the official IMDb and The Movie Database (TMDb) pages.
-    2.  **Cross-Verify**: Compare data. Prioritize IMDb for critical data.
-    3.  **Extract Verified Data**: From the verified sources, extract: title, backdropUrl (prioritize TMDb, must be a direct image link or null), genres, imdbRating, letterboxdRating, rottenTomatoesRating, releaseDate (YYYY-MM-DD), director, cinematography, screenplay, runningTime (e.g., "148 minutes"), adaptedFrom, producer, budget, boxOffice, and cast (top 6 as {actorName, characterName}).
-    4.  **Format Output**: Return ONLY a single, valid JSON object. If a field is not found, its value must be null.`;
+    1.  Use Google Search to find the movie "${itemName}" (${year || 'any year'}) on its official IMDb and The Movie Database (TMDb) pages.
+    2.  Extract the requested data points accurately.
+    3.  If a specific data point cannot be found, its value MUST be null. Do not invent data.
+    4.  Your entire response MUST be a single, raw JSON object, without any surrounding text, explanations, or markdown formatting (like \`\`\`json\`).
+    
+    JSON SCHEMA TO FOLLOW:
+    {
+      "title": "string",
+      "backdropUrl": "string|null",
+      "genres": ["string"],
+      "imdbRating": "string|null",
+      "letterboxdRating": "string|null",
+      "rottenTomatoesRating": "string|null",
+      "releaseDate": "string (YYYY-MM-DD)|null",
+      "director": ["string"]|null,
+      "cinematography": ["string"]|null,
+      "screenplay": ["string"]|null,
+      "runningTime": "string (e.g., '148 minutes')|null",
+      "adaptedFrom": "string|null",
+      "producer": ["string"]|null,
+      "budget": "string|null",
+      "boxOffice": "string|null",
+      "cast": [{ "actorName": "string", "characterName": "string" }]
+    }
+
+    Retrieve the data for "${itemName}" (${year || 'any year'}) and provide the JSON output.`;
 
     const bookPrompt = `
-    TASK: Become a meticulous book data fact-checker for "${itemName}".
+    TASK: You are a book data API. Your sole purpose is to retrieve factual data for a given book and return it as a valid JSON object.
+
     INSTRUCTIONS:
-    1.  **Primary Sources**: Use Google Search to find the official Goodreads and publisher pages.
-    2.  **Cross-Verify**: Compare data from reliable sources.
-    3.  **Extract Verified Data**: From the verified sources, extract: title, backdropUrl (find a high-quality, thematic, publicly accessible image related to the book's mood or setting; must be a direct image link or null), author, genres, publicationDate (YYYY-MM-DD), publisher, pageCount (e.g., "354 pages"), and awards (an array of strings).
-    4.  **Format Output**: Return ONLY a single, valid JSON object. If a field is not found, its value must be null.`;
+    1.  Use Google Search to find the book "${itemName}" on its official Goodreads and publisher pages.
+    2.  Extract the requested data points accurately.
+    3.  If a specific data point cannot be found, its value MUST be null. Do not invent data.
+    4.  Your entire response MUST be a single, raw JSON object, without any surrounding text, explanations, or markdown formatting (like \`\`\`json\`).
+
+    JSON SCHEMA TO FOLLOW:
+    {
+      "title": "string",
+      "backdropUrl": "string|null",
+      "author": ["string"]|null,
+      "genres": ["string"],
+      "publicationDate": "string (YYYY-MM-DD)|null",
+      "publisher": "string|null",
+      "pageCount": "string (e.g., '354 pages')|null",
+      "awards": ["string"]|null
+    }
+    
+    Retrieve the data for "${itemName}" and provide the JSON output.`;
 
     const prompt = itemType === 'movie' ? moviePrompt : bookPrompt;
 
@@ -107,14 +145,14 @@ const getItemDetails = async (itemName: string, year: string | undefined, itemTy
     });
 
     try {
-        let jsonText = response.text?.trim() || '';
-        const match = jsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-        if (match) jsonText = match[1];
-        if (!jsonText) throw new Error(`Could not retrieve ${itemType} details. The API returned an empty response.`);
+        const jsonText = response.text?.trim();
+        if (!jsonText) {
+            throw new Error(`Could not retrieve ${itemType} details. The API returned an empty response.`);
+        }
         return JSON.parse(jsonText);
     } catch (e) {
         console.error(`Failed to parse ${itemType} details JSON:`, e, `Raw response: "${response.text}"`);
-        throw new Error(`Could not retrieve ${itemType} details. The format was invalid.`);
+        throw new Error(`Could not retrieve ${itemType} details. The API returned an invalid format.`);
     }
 };
 
