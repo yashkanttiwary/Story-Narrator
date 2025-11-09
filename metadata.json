@@ -1,0 +1,7 @@
+{
+  "name": "What A Scene by Yash v5",
+  "description": "Ready to Experience? Enter a title below to begin a unique, soul-deep story experience.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
