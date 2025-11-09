@@ -51,6 +51,55 @@ After the story completes, briefly reflect:
 Now, guide me through the story of the book: **{{ITEM_NAME}}**
 `;
 
+const movieSchema = {
+    type: Type.OBJECT,
+    properties: {
+        title: { type: Type.STRING },
+        backdropUrl: { type: Type.STRING, nullable: true, description: "A high-quality, thematic, publicly accessible image URL. Can be null." },
+        genres: { type: Type.ARRAY, items: { type: Type.STRING } },
+        imdbRating: { type: Type.STRING, nullable: true },
+        letterboxdRating: { type: Type.STRING, nullable: true },
+        rottenTomatoesRating: { type: Type.STRING, nullable: true },
+        releaseDate: { type: Type.STRING, description: "Format: YYYY-MM-DD" },
+        director: { type: Type.ARRAY, items: { type: Type.STRING } },
+        cinematography: { type: Type.ARRAY, items: { type: Type.STRING } },
+        screenplay: { type: Type.ARRAY, items: { type: Type.STRING } },
+        runningTime: { type: Type.STRING, description: "e.g., '148 minutes'", nullable: true },
+        adaptedFrom: { type: Type.STRING, nullable: true },
+        producer: { type: Type.ARRAY, items: { type: Type.STRING } },
+        budget: { type: Type.STRING, nullable: true },
+        boxOffice: { type: Type.STRING, nullable: true },
+        cast: {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    actorName: { type: Type.STRING },
+                    characterName: { type: Type.STRING }
+                },
+                required: ['actorName', 'characterName']
+            }
+        }
+    },
+    required: ['title', 'genres', 'releaseDate', 'director', 'cast']
+};
+
+const bookSchema = {
+    type: Type.OBJECT,
+    properties: {
+        title: { type: Type.STRING },
+        backdropUrl: { type: Type.STRING, nullable: true, description: "A high-quality, thematic, publicly accessible image URL. Can be null." },
+        author: { type: Type.ARRAY, items: { type: Type.STRING } },
+        genres: { type: Type.ARRAY, items: { type: Type.STRING } },
+        publicationDate: { type: Type.STRING, description: "Format: YYYY-MM-DD" },
+        publisher: { type: Type.STRING, nullable: true },
+        pageCount: { type: Type.STRING, description: "e.g., '354 pages'", nullable: true },
+        awards: { type: Type.ARRAY, items: { type: Type.STRING }, nullable: true }
+    },
+    required: ['title', 'author', 'genres', 'publicationDate']
+};
+
+
 const getCoverUrl = async (itemName: string, itemType: 'movie' | 'book', year: string | undefined, apiKey: string): Promise<string> => {
   const ai = new GoogleGenAI({ apiKey });
   const yearInfo = year ? `(${year})` : '';
@@ -82,77 +131,26 @@ const getCoverUrl = async (itemName: string, itemType: 'movie' | 'book', year: s
 
 const getItemDetails = async (itemName: string, year: string | undefined, itemType: 'movie' | 'book', apiKey: string): Promise<MovieDetails | BookDetails> => {
     const ai = new GoogleGenAI({ apiKey });
-    const moviePrompt = `
-    TASK: You are a movie data API. Your sole purpose is to retrieve factual data for a given movie and return it as a valid JSON object.
-    
-    INSTRUCTIONS:
-    1.  Use Google Search to find the movie "${itemName}" (${year || 'any year'}) on its official IMDb and The Movie Database (TMDb) pages.
-    2.  Extract the requested data points accurately.
-    3.  If a specific data point cannot be found, its value MUST be null. Do not invent data.
-    4.  Your entire response MUST be a single, raw JSON object, without any surrounding text, explanations, or markdown formatting (like \`\`\`json\`).
-    
-    JSON SCHEMA TO FOLLOW:
-    {
-      "title": "string",
-      "backdropUrl": "string|null",
-      "genres": ["string"],
-      "imdbRating": "string|null",
-      "letterboxdRating": "string|null",
-      "rottenTomatoesRating": "string|null",
-      "releaseDate": "string (YYYY-MM-DD)|null",
-      "director": ["string"]|null,
-      "cinematography": ["string"]|null,
-      "screenplay": ["string"]|null,
-      "runningTime": "string (e.g., '148 minutes')|null",
-      "adaptedFrom": "string|null",
-      "producer": ["string"]|null,
-      "budget": "string|null",
-      "boxOffice": "string|null",
-      "cast": [{ "actorName": "string", "characterName": "string" }]
-    }
-
-    Retrieve the data for "${itemName}" (${year || 'any year'}) and provide the JSON output.`;
-
-    const bookPrompt = `
-    TASK: You are a book data API. Your sole purpose is to retrieve factual data for a given book and return it as a valid JSON object.
-
-    INSTRUCTIONS:
-    1.  Use Google Search to find the book "${itemName}" on its official Goodreads and publisher pages.
-    2.  Extract the requested data points accurately.
-    3.  If a specific data point cannot be found, its value MUST be null. Do not invent data.
-    4.  Your entire response MUST be a single, raw JSON object, without any surrounding text, explanations, or markdown formatting (like \`\`\`json\`).
-
-    JSON SCHEMA TO FOLLOW:
-    {
-      "title": "string",
-      "backdropUrl": "string|null",
-      "author": ["string"]|null,
-      "genres": ["string"],
-      "publicationDate": "string (YYYY-MM-DD)|null",
-      "publisher": "string|null",
-      "pageCount": "string (e.g., '354 pages')|null",
-      "awards": ["string"]|null
-    }
-    
-    Retrieve the data for "${itemName}" and provide the JSON output.`;
-
-    const prompt = itemType === 'movie' ? moviePrompt : bookPrompt;
+    const prompt = `Based on your knowledge, provide a comprehensive set of data for the ${itemType}: "${itemName}"${year ? ` released around ${year}` : ''}. Please find the most popular and well-known entry that matches this title. Fill out all fields in the provided JSON schema as accurately as possible. For fields like ratings or financial data, find the most commonly cited figures. For cast, list the top 6 most prominent actors. If a piece of information is not available, use a null value.`;
 
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: prompt,
-        config: { tools: [{ googleSearch: {} }] },
+        config: {
+            responseMimeType: "application/json",
+            responseSchema: itemType === 'movie' ? movieSchema : bookSchema,
+        },
     });
 
     try {
-        const jsonText = response.text?.trim();
-        if (!jsonText) {
+        const jsonText = response.text?.trim() || '{}';
+        if (jsonText === '{}') {
             throw new Error(`Could not retrieve ${itemType} details. The API returned an empty response.`);
         }
         return JSON.parse(jsonText);
     } catch (e) {
         console.error(`Failed to parse ${itemType} details JSON:`, e, `Raw response: "${response.text}"`);
-        throw new Error(`Could not retrieve ${itemType} details. The API returned an invalid format.`);
+        throw new Error(`Could not retrieve ${itemType} details. The format was invalid.`);
     }
 };
 
