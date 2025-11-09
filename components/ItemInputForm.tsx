@@ -29,6 +29,11 @@ const ItemInputForm: React.FC<ItemInputFormProps> = ({
 }) => {
   const placeholderText = itemType === 'movie' ? "Enter movie name (e.g., The Matrix)" : "Enter book title (e.g., Dune)";
 
+  const handleYearChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const numericValue = e.target.value.replace(/[^0-9]/g, '');
+    setYear(numericValue);
+  };
+  
   return (
     <form onSubmit={handleSubmit} className="w-full max-w-3xl mx-auto">
       <div className="flex justify-center mb-4">
@@ -56,20 +61,25 @@ const ItemInputForm: React.FC<ItemInputFormProps> = ({
           placeholder={placeholderText}
           className="flex-grow bg-transparent text-white placeholder-gray-400 px-4 py-3 focus:outline-none focus:ring-0 border-none"
           required
+          aria-required="true"
           disabled={isLoading}
+          maxLength={150}
         />
         <div className="h-px w-full sm:h-8 sm:w-px bg-white/20" />
         <input
           type="text"
           value={year}
-          onChange={(e) => setYear(e.target.value)}
+          onChange={handleYearChange}
           placeholder={itemType === 'movie' ? "Year (Opt)" : "Pub. Year (Opt)"}
           className="sm:w-32 bg-transparent text-white placeholder-gray-400 px-4 py-3 focus:outline-none focus:ring-0 border-none text-left sm:text-center"
           disabled={isLoading}
+          maxLength={4}
+          pattern="[0-9]*"
+          inputMode="numeric"
         />
         <button
           type="submit"
-          disabled={isLoading || !apiKey.trim()}
+          disabled={isLoading || !apiKey.trim() || !itemName.trim()}
           className="flex-shrink-0 inline-flex items-center justify-center bg-indigo-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-indigo-700 disabled:bg-indigo-500 disabled:cursor-not-allowed transition-all duration-200 sm:ml-2"
         >
           {isLoading ? (
@@ -84,13 +94,16 @@ const ItemInputForm: React.FC<ItemInputFormProps> = ({
         </button>
       </div>
       <div className="mt-4">
+         <label htmlFor="api-key-input" className="sr-only">Google AI API Key</label>
         <input
+          id="api-key-input"
           type="password"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
-          placeholder="Enter your Google AI Studio API Key"
+          placeholder="Enter your Google AI API Key*"
           className="w-full bg-black/30 border border-white/20 rounded-xl px-4 py-3 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white placeholder-gray-400 backdrop-blur-md shadow-lg"
           required
+          aria-required="true"
           disabled={isLoading}
         />
         <p className="text-right text-xs text-gray-400 mt-2 pr-2">

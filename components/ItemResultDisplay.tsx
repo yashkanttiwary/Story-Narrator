@@ -1,13 +1,15 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { ItemData, MovieDetails, BookDetails, ChatMessage } from '../types';
+import { ItemData, MovieDetails, BookDetails } from '../types';
 import AudioPlayer from './AudioPlayer';
 import DownloadIcon from './icons/DownloadIcon';
 import CopyIcon from './icons/CopyIcon';
 import CheckIcon from './icons/CheckIcon';
+import SearchIcon from './icons/SearchIcon';
 import MarkdownRenderer from './MarkdownRenderer';
-import ChatBox from './ChatBox';
-import { getNarrationAudio } from '../services/geminiService';
-import { decode, decodeAudioData, createWavBlob } from '../utils/audioUtils';
+import { getNarrationAudio, getItemNarrationStream } from '../services/geminiService';
+import { decode, decodeAudioData, createWavBlob, AUDIO_SAMPLE_RATE } from '../utils/audioUtils';
+import Loader from './Loader';
+
 
 declare global {
   interface Window {
@@ -16,8 +18,11 @@ declare global {
 }
 
 interface ItemResultDisplayProps {
-  data: ItemData;
+  data: Omit<ItemData, 'narration'>;
   apiKey: string;
+  onNewSearch: () => void;
+  onNarrationComplete: () => void;
+  initialLoadingMessage: string;
 }
 
 const createGoogleSearchUrl = (query: string | null): string => {
@@ -42,7 +47,7 @@ const DetailItem: React.FC<{ label: string; value: string | string[] | null; lin
               href={createGoogleSearchUrl(name)}
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-indigo-300 transition-colors underline-offset-2 hover:underline"
+              className="hover:text-indigo-300 transition-colors underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-400 rounded"
             >
               {name}
             </a>
@@ -88,7 +93,7 @@ const formatRunningTime = (timeStr: string | null): string | null => {
     return formattedTime.trim() || timeStr;
 };
 
-const placeholderSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="500" height="750" viewBox="0 0 500 750" fill="#1f2937"><g transform="translate(175, 300) scale(6.25)"><path d="M2,4.18A2.18,2.18,0,0,1,4.18,2H19.82A2.18,2.18,0,0,1,22,4.18V19.82A2.18,2.18,0,0,1,19.82,22H4.18A2.18,2.18,0,0,1,2,19.82Z M7,2V22 M17,2V22 M2,12H22 M2,7H7 M2,17H7 M17,17H22 M17,7H22" fill="none" stroke="#4b5563" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></g></svg>`;
+const placeholderSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="500" height="750" viewBox="0 0 500 750" fill="#1f2937" aria-label="Placeholder for cover art"><g transform="translate(175, 300) scale(6.25)"><path d="M2,4.18A2.18,2.18,0,0,1,4.18,2H19.82A2.18,2.18,0,0,1,22,4.18V19.82A2.18,2.18,0,0,1,19.82,22H4.18A2.18,2.18,0,0,1,2,19.82Z M7,2V22 M17,2V22 M2,12H22 M2,7H7 M2,17H7 M17,17H22 M17,7H22" fill="none" stroke="#4b5563" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></g></svg>`;
 const placeholderCover = `data:image/svg+xml;base64,${btoa(placeholderSvg)}`;
 
 const sanitizeTextForPdf = (text: string): string => {
@@ -103,21 +108,47 @@ const sanitizeTextForPdf = (text: string): string => {
   return sanitizedText;
 };
 
-const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey }) => {
-  const { type, details, narration } = data;
+const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey, onNewSearch, onNarrationComplete, initialLoadingMessage }) => {
+  const { type, details } = data;
   const isMovie = type === 'movie';
   const movieDetails = isMovie ? details as MovieDetails : null;
   const bookDetails = !isMovie ? details as BookDetails : null;
+
+  const [narration, setNarration] = useState<string>('');
+  const [isStreaming, setIsStreaming] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    const streamNarration = async () => {
+      try {
+        const stream = getItemNarrationStream(details.title, details.releaseDate || bookDetails?.publicationDate, type, apiKey);
+        for await (const chunk of stream) {
+          if (!active) return;
+          setNarration(prev => prev + chunk);
+        }
+      } catch (error) {
+        console.error("Narration streaming failed:", error);
+        setNarration("Sorry, we couldn't generate the narration at this time.");
+      } finally {
+        if (active) {
+          setIsStreaming(false);
+          onNarrationComplete();
+        }
+      }
+    };
+    streamNarration();
+    return () => { active = false; };
+  }, [data, apiKey, onNarrationComplete, details.title, details.releaseDate, bookDetails?.publicationDate, type]);
+
 
   const year = details.releaseDate || bookDetails?.publicationDate ? new Date(details.releaseDate || bookDetails!.publicationDate).getFullYear() : '';
   const coverSrc = details.coverUrl || placeholderCover;
 
   const trailerSearchQuery = encodeURIComponent(`${details.title} ${year} official trailer`);
-  const trailerUrl = `https://www.youtube.com/results?search_query=${trailerSearchQuery}`;
+  const trailerLink = movieDetails?.trailerUrl || `https://www.youtube.com/results?search_query=${trailerSearchQuery}`;
   
   const [isCopied, setIsCopied] = useState(false);
   const [isDownloadLoading, setIsDownloadLoading] = useState(false);
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
 
   const [audioData, setAudioData] = useState<{ buffer: AudioBuffer; wavBlob: Blob } | null>(null);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
@@ -144,12 +175,12 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey }) =
   }, [cleanupAudio, narration]);
   
   const fetchAndCacheAudio = useCallback(async () => {
-    if (audioData) return audioData;
+    if (audioData || isStreaming) return audioData;
     
     setIsAudioLoading(true);
     try {
-        if (!audioContextRef.current) {
-            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+        if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: AUDIO_SAMPLE_RATE });
         }
         if (audioContextRef.current.state === 'suspended') {
             await audioContextRef.current.resume();
@@ -157,8 +188,8 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey }) =
 
         const base64Audio = await getNarrationAudio(narration, apiKey);
         const pcmData = decode(base64Audio);
-        const buffer = await decodeAudioData(pcmData, audioContextRef.current, 24000, 1);
-        const wavBlob = createWavBlob(pcmData, 24000, 1);
+        const buffer = await decodeAudioData(pcmData, audioContextRef.current, AUDIO_SAMPLE_RATE, 1);
+        const wavBlob = createWavBlob(pcmData, AUDIO_SAMPLE_RATE, 1);
 
         const newAudioData = { buffer, wavBlob };
         setAudioData(newAudioData);
@@ -170,9 +201,11 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey }) =
     } finally {
         setIsAudioLoading(false);
     }
-  }, [audioData, narration, apiKey]);
+  }, [audioData, narration, apiKey, isStreaming]);
 
   const handlePlayPause = useCallback(async () => {
+    if (isAudioLoading || isStreaming) return;
+
     if (isAudioPlaying) {
       cleanupAudio();
       return;
@@ -193,9 +226,10 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey }) =
       sourceRef.current = source;
       setIsAudioPlaying(true);
     }
-  }, [isAudioPlaying, audioData, fetchAndCacheAudio, cleanupAudio]);
+  }, [isAudioPlaying, isAudioLoading, audioData, fetchAndCacheAudio, cleanupAudio, isStreaming]);
 
   const handleDownloadAudio = useCallback(async () => {
+    if (isDownloadLoading || isStreaming) return;
     setIsDownloadLoading(true);
     const currentAudio = audioData ?? await fetchAndCacheAudio();
     setIsDownloadLoading(false);
@@ -211,11 +245,11 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey }) =
       window.URL.revokeObjectURL(url);
       a.remove();
     }
-  }, [audioData, fetchAndCacheAudio, details.title]);
+  }, [audioData, fetchAndCacheAudio, details.title, isDownloadLoading, isStreaming]);
 
   const handleDownloadPdf = useCallback(() => {
-    if (typeof window.jspdf === 'undefined') {
-      console.error("jsPDF library is not loaded.");
+    if (isStreaming || typeof window.jspdf === 'undefined') {
+      console.error("jsPDF library is not loaded or narration is still streaming.");
       return;
     }
     const { jsPDF } = window.jspdf;
@@ -234,7 +268,6 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey }) =
     doc.line(page.margin.left, y, page.width - page.margin.right, y);
     y += 10;
 
-    // Render Narration
     const sanitizedNarration = sanitizeTextForPdf(narration);
     const blocks = sanitizedNarration.split(/\n\s*\n/);
     blocks.forEach(block => {
@@ -265,41 +298,7 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey }) =
       doc.text(lines, page.margin.left, y, { lineHeightFactor: 1.15 });
       y += blockHeight + spaceAfter;
     });
-    
-    // Render Chat History
-    if (chatHistory.length > 0) {
-        if (y + 20 > page.height - page.margin.bottom) { doc.addPage(); y = page.margin.top; }
-        y += 10;
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(14);
-        doc.text('Chat Conversation', page.margin.left, y);
-        y += 6;
-        doc.setDrawColor(180);
-        doc.line(page.margin.left, y, page.width - page.margin.right, y);
-        y += 8;
 
-        chatHistory.forEach(message => {
-            const prefix = message.role === 'user' ? 'You: ' : 'AI: ';
-            const textToRender = sanitizeTextForPdf(message.text);
-
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(11);
-            
-            const prefixWidth = doc.getTextWidth(prefix);
-            const lines = doc.splitTextToSize(textToRender, contentWidth - prefixWidth);
-            const blockHeight = doc.getTextDimensions(lines).h;
-
-            if (y + blockHeight > page.height - page.margin.bottom) { doc.addPage(); y = page.margin.top; }
-            
-            doc.text(prefix, page.margin.left, y, {lineHeightFactor: 1.15});
-            
-            doc.setFont('times', 'normal');
-            doc.text(lines, page.margin.left + prefixWidth, y, {lineHeightFactor: 1.15});
-            y += blockHeight + 6;
-        });
-    }
-
-    // Add Page Numbers
     const pageCount = doc.internal.getNumberOfPages();
     doc.setFont('helvetica', 'italic');
     doc.setFontSize(9);
@@ -308,19 +307,30 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey }) =
       doc.text(`Page ${i} of ${pageCount}`, page.width / 2, page.height - 15, { align: 'center' });
     }
     doc.save(filename);
-  }, [details.title, narration, chatHistory]);
+  }, [details.title, narration, isStreaming]);
 
   const handleCopy = useCallback(() => {
-    if (isCopied) return;
+    if (isCopied || isStreaming) return;
     navigator.clipboard.writeText(narration)
       .then(() => {
         setIsCopied(true);
         setTimeout(() => setIsCopied(false), 2500);
       });
-  }, [narration, isCopied]);
+  }, [narration, isCopied, isStreaming]);
 
   return (
     <div className="w-full max-w-7xl mx-auto animate-fade-in">
+       <div className="text-center mb-8">
+        <button
+          onClick={onNewSearch}
+          className="inline-flex items-center justify-center bg-indigo-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-indigo-700 disabled:bg-indigo-500 disabled:cursor-not-allowed transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-indigo-500"
+          aria-label="Start a new search"
+        >
+          <SearchIcon className="w-5 h-5 mr-2" />
+          <span>New Search</span>
+        </button>
+      </div>
+
       <div className="relative h-64 md:h-80 lg:h-96 rounded-2xl overflow-hidden shadow-2xl bg-gray-800">
         {details.backdropUrl && <img src={details.backdropUrl} alt={`Backdrop for ${details.title}`} className="absolute inset-0 w-full h-full object-cover object-center" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />}
         <div className="absolute inset-0 bg-gradient-to-t from-gray-900 via-gray-900/70 to-transparent"></div>
@@ -335,12 +345,12 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey }) =
             </div>
             <div className="mt-4 flex flex-col gap-3">
               {isMovie && (
-                <a href={trailerUrl} target="_blank" rel="noopener noreferrer" className="w-full inline-flex items-center justify-center bg-red-600 text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-red-700 transition-colors text-sm">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
+                <a href={trailerLink} target="_blank" rel="noopener noreferrer" className="w-full inline-flex items-center justify-center bg-red-600 text-white font-semibold px-4 py-2.5 rounded-lg hover:bg-red-700 transition-colors text-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-red-500">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
                   Watch Trailer
                 </a>
               )}
-              <AudioPlayer onPlayPause={handlePlayPause} isPlaying={isAudioPlaying} isLoading={isAudioLoading} />
+              <AudioPlayer onPlayPause={handlePlayPause} isPlaying={isAudioPlaying} isLoading={isAudioLoading || isStreaming} />
             </div>
           </div>
           
@@ -349,7 +359,7 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey }) =
             {year && <p className="text-xl font-light text-gray-400 mt-1">{year}</p>}
             <div className="flex flex-wrap gap-2 my-4">{details.genres.map(genre => <span key={genre} className="px-3 py-1 bg-gray-700 text-gray-300 text-xs font-medium rounded-full">{genre}</span>)}</div>
             {isMovie && movieDetails && (
-              <div className="flex items-center gap-6 my-5 text-sm">
+              <div className="flex items-center flex-wrap gap-x-6 gap-y-2 my-5 text-sm">
                   <RatingDisplay label="IMDb" value={movieDetails.imdbRating} />
                   <RatingDisplay label="Rotten Tomatoes" value={movieDetails.rottenTomatoesRating} />
                   <RatingDisplay label="Letterboxd" value={movieDetails.letterboxdRating} />
@@ -363,19 +373,20 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey }) =
             <div className="flex justify-between items-center border-b-2 border-indigo-500/30 pb-2 mb-4">
               <h3 className="text-2xl font-bold text-indigo-300">AI Narration</h3>
               <div className="flex items-center gap-2">
-                 <button onClick={handleDownloadAudio} disabled={isDownloadLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-gray-700/60 hover:bg-gray-700 rounded-md transition-colors text-gray-300 disabled:cursor-wait" title="Download as WAV audio">
+                 <button onClick={handleDownloadAudio} disabled={isDownloadLoading || isStreaming} aria-label="Download narration as WAV audio" className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-gray-700/60 hover:bg-gray-700 rounded-md transition-colors text-gray-300 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-indigo-400" title="Download as WAV audio">
                   {isDownloadLoading ? <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> : <DownloadIcon className="w-4 h-4" />}
                   <span>Audio</span>
                 </button>
-                <button onClick={handleDownloadPdf} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-gray-700/60 hover:bg-gray-700 rounded-md transition-colors text-gray-300" title="Download as PDF">
+                <button onClick={handleDownloadPdf} disabled={isStreaming} aria-label="Download narration as PDF" className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-gray-700/60 hover:bg-gray-700 rounded-md transition-colors text-gray-300 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-indigo-400" title="Download as PDF">
                   <DownloadIcon className="w-4 h-4" />
                   <span>PDF</span>
                 </button>
-                <button onClick={handleCopy} disabled={isCopied} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-gray-700/60 hover:bg-gray-700 rounded-md transition-colors text-gray-300 w-28 justify-center disabled:bg-green-600/80 disabled:cursor-default" title="Copy to clipboard">
+                <button onClick={handleCopy} disabled={isCopied || isStreaming} aria-label="Copy narration text to clipboard" className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-gray-700/60 hover:bg-gray-700 rounded-md transition-colors text-gray-300 w-28 justify-center disabled:bg-green-600/80 disabled:cursor-default disabled:opacity-100 focus:outline-none focus:ring-2 focus:ring-indigo-400" title="Copy to clipboard">
                   {isCopied ? (<><CheckIcon className="w-4 h-4" /><span>Copied!</span></>) : (<><CopyIcon className="w-4 h-4" /><span>Copy Text</span></>)}
                 </button>
               </div>
             </div>
+            {isStreaming && !narration && <Loader message={initialLoadingMessage} />}
             <div className="prose prose-invert max-w-none text-gray-300">
               <MarkdownRenderer text={narration} />
             </div>
@@ -410,7 +421,7 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey }) =
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
                         {movieDetails.cast.map((member) => (
                         <div key={member.actorName}>
-                            <a href={`https://www.google.com/search?q=${encodeURIComponent(member.actorName)}`} target="_blank" rel="noopener noreferrer" className="text-base text-white font-medium hover:text-indigo-300 transition-colors">
+                            <a href={`https://www.google.com/search?q=${encodeURIComponent(member.actorName)}`} target="_blank" rel="noopener noreferrer" className="text-base text-white font-medium hover:text-indigo-300 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-400 rounded">
                             {member.actorName}
                             </a>
                             <p className="text-sm text-gray-400">as {member.characterName}</p>
@@ -420,12 +431,6 @@ const ItemResultDisplay: React.FC<ItemResultDisplayProps> = ({ data, apiKey }) =
                 </div>
             )}
           </div>
-          <ChatBox 
-            itemTitle={details.title} 
-            narration={narration} 
-            onHistoryChange={setChatHistory} 
-            apiKey={apiKey}
-          />
         </div>
       </div>
     </div>

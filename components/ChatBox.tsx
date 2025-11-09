@@ -14,6 +14,12 @@ interface ChatBoxProps {
     apiKey: string;
 }
 
+const sanitizeInput = (text: string): string => {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+};
+
 const ChatBox: React.FC<ChatBoxProps> = ({ itemTitle, narration, onHistoryChange, apiKey }) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState('');
@@ -40,7 +46,7 @@ const ChatBox: React.FC<ChatBoxProps> = ({ itemTitle, narration, onHistoryChange
         processorRef.current?.disconnect();
         sourceRef.current?.disconnect();
         streamRef.current?.getTracks().forEach(track => track.stop());
-        inputAudioContextRef.current?.close();
+        inputAudioContextRef.current?.close().catch(console.error);
         
         sessionPromiseRef.current = null;
         processorRef.current = null;
@@ -72,17 +78,23 @@ ${narration}
 
 
     const handleSend = useCallback(async () => {
-        if (!input.trim() || !chatRef.current) return;
+        const sanitizedText = sanitizeInput(input.trim());
+        if (!sanitizedText || !chatRef.current) return;
         
-        const userMessage: ChatMessage = { role: 'user', text: input };
+        if (isRecording) { // Fix for H02
+            stopRecording();
+        }
+
+        const userMessage: ChatMessage = { role: 'user', text: sanitizedText };
         setMessages(prev => [...prev, userMessage]);
         setInput('');
         setIsLoading(true);
 
         try {
-            const stream = await chatRef.current.sendMessageStream({ message: input });
+            const stream = await chatRef.current.sendMessageStream({ message: sanitizedText });
             let modelResponse = '';
-            setMessages(prev => [...prev, { role: 'model', text: '...' }]);
+            // Add a placeholder immediately
+            setMessages(prev => [...prev, { role: 'model', text: '' }]);
 
             for await (const chunk of stream) {
                 modelResponse += chunk.text;
@@ -92,6 +104,7 @@ ${narration}
                     return newMessages;
                 });
             }
+            // Final update to remove the ellipsis
             setMessages(prev => {
                 const newMessages = [...prev];
                 newMessages[newMessages.length - 1] = { role: 'model', text: modelResponse };
@@ -103,7 +116,7 @@ ${narration}
         } finally {
             setIsLoading(false);
         }
-    }, [input]);
+    }, [input, isRecording, stopRecording]);
 
     const startRecording = useCallback(async () => {
         try {
@@ -165,6 +178,12 @@ ${narration}
             startRecording();
         }
     }, [isRecording, stopRecording, startRecording]);
+    
+    const placeholderText = isRecording 
+      ? "Listening..."
+      : messages.length === 0 
+        ? "Ask a question about the story..." 
+        : "Ask a follow-up question...";
 
     return (
         <div className="w-full max-w-4xl mx-auto mt-12">
@@ -190,20 +209,21 @@ ${narration}
                     <div ref={messagesEndRef} />
                 </div>
                 <div className="p-3 border-t border-gray-700 bg-gray-900/50">
-                    <div className="flex items-center bg-gray-800 rounded-lg">
+                    <div className={`flex items-center bg-gray-800 rounded-lg transition-all ${isRecording ? 'ring-2 ring-red-500' : 'focus-within:ring-2 focus-within:ring-indigo-500'}`}>
                         <input
                             type="text"
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSend()}
-                            placeholder={isRecording ? "Listening..." : "Ask a follow-up question..."}
+                            placeholder={placeholderText}
                             className="flex-grow bg-transparent text-white placeholder-gray-400 p-3 focus:outline-none"
                             disabled={isLoading || isRecording}
+                            maxLength={1000}
                         />
-                        <button onClick={toggleRecording} disabled={isLoading} className="p-3 text-gray-400 hover:text-white disabled:text-gray-600 transition-colors" aria-label={isRecording ? 'Stop recording' : 'Start recording'}>
+                        <button onClick={toggleRecording} disabled={isLoading} className="p-3 text-gray-400 hover:text-white disabled:text-gray-600 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-full" aria-label={isRecording ? 'Stop recording' : 'Start recording'}>
                             {isRecording ? <StopIcon className="w-5 h-5 text-red-500 animate-pulse" /> : <MicrophoneIcon className="w-5 h-5" />}
                         </button>
-                        <button onClick={handleSend} disabled={!input.trim() || isLoading} className="p-3 text-indigo-400 hover:text-indigo-300 disabled:text-gray-600 disabled:cursor-not-allowed transition-colors" aria-label="Send message">
+                        <button onClick={handleSend} disabled={!input.trim() || isLoading} className="p-3 text-indigo-400 hover:text-indigo-300 disabled:text-gray-600 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-full" aria-label="Send message">
                             <SendIcon className="w-5 h-5" />
                         </button>
                     </div>

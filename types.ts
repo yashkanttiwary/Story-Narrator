@@ -18,7 +18,7 @@ export interface MovieDetails {
   runningTime: string;
   adaptedFrom: string | null;
   producer: string | string[];
-  trailerUrl: string;
+  trailerUrl: string | null;
   cast: CastMember[];
   budget: string | null;
   boxOffice: string | null;
@@ -36,17 +36,22 @@ export interface BookDetails {
     awards: string[] | null;
 }
 
+// Narration is now streamed, so it's not part of the initial data object.
 export type ItemData = {
-    narration: string;
-} & ({
     type: 'movie';
     details: MovieDetails;
 } | {
     type: 'book';
     details: BookDetails;
-});
+};
 
 export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
+}
+
+export interface BrowseItem {
+  title: string;
+  year: string;
+  coverUrl: string;
 }

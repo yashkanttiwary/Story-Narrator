@@ -1,55 +1,33 @@
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import { MovieDetails, BookDetails, ItemData } from '../types';
+import { MovieDetails, BookDetails, ItemData, BrowseItem } from '../types';
+import { MOVIE_NARRATION_PROMPT, BOOK_NARRATION_PROMPT } from './prompts';
 
-const MOVIE_NARRATION_PROMPT = `
-ROLE: Intuitive Story Guide — You help someone experience a film's complete story by following its natural timeline and structure exactly as the director presents it, while revealing the emotional and thematic depths that create connection. You don't impose frameworks or reorganize—you follow the film's flow, weaving in character interiority, directorial craft, and thematic resonance organically as the story unfolds.
+const aiClientCache = new Map<string, GoogleGenAI>();
 
-TASK: Guide me through the complete story of the film **{{ITEM_NAME}} ({{YEAR}})** in **1000-1200 words**, following its natural timeline and structure, with soul woven into the flow.
-... [rest of detailed movie prompt]
-`;
+const getAiClient = (apiKey: string): GoogleGenAI => {
+    if (!aiClientCache.has(apiKey)) {
+        aiClientCache.set(apiKey, new GoogleGenAI({ apiKey }));
+    }
+    return aiClientCache.get(apiKey)!;
+};
 
-const BOOK_NARRATION_PROMPT = `
-ROLE: Literary Story Guide — You help someone experience a book's complete story by following its narrative structure, while revealing the emotional and thematic depths woven into the author's prose. You follow the book's flow, weaving in character interiority, authorial craft, and thematic resonance organically as the story unfolds.
-
-TASK: Guide me through the complete story of the book **{{ITEM_NAME}}** in **1000-1200 words**, following its narrative structure, with soul woven into the flow.
-
----
-
-📖 THE FLOWING STRUCTURE — ORGANIC INTEGRATION
-
-### 🎭 OPENING: The Soul's Essence (75-100 words)
-Before diving into the story, briefly ground us in what we're about to experience:
-- **What is this book about at its core?** (1-2 sentences) - The THEME or human experience it explores.
-- **What's the narrative voice/tone?** (1 sentence) - Intimate, epic, melancholic, satirical, etc.
-- **Who is at the center, and what's their inner struggle?** (1-2 sentences) - Their INTERNAL CONFLICT.
-
-### 🌊 THE STORY FLOWS — Follow the Narrative with Soul Woven In
-From here, simply TELL THE STORY in the order the book presents it, weaving in depth naturally:
-
-**CORE TECHNIQUE: The Integrated Observation**
-As you describe what happens, seamlessly integrate:
-1.  **Character Interiority** — What they're feeling/fearing/wanting internally.
-2.  **Thematic Resonance** — How moments connect to the book's core idea.
-3.  **Authorial Craft** — How the author uses prose, structure, or symbolism to create feeling.
-4.  **Emotional Truth** — Universal human moments that create connection.
-
-### 💫 CLOSING: Thematic Echo (50-75 words)
-After the story completes, briefly reflect:
-- **What experience does this book give you?** What feeling does it leave you with?
-- **What question or truth does it explore?** What is the book ultimately about/saying?
-- **Why does it resonate?** What human truth does it touch?
-
----
-
-🎯 EXECUTION PRINCIPLES — ORGANIC SOUL INTEGRATION
-- **TIMELINE FIDELITY:** Tell the story in the exact order the book presents it.
-- **RESPECT AUTHOR'S STRUCTURE:** Don't force a three-act structure if it's not there.
-- **RESPECT AUTHOR'S PACING:** Match your narrative rhythm to the book's prose.
-- **WEAVE SOUL NATURALLY:** Integrate observations about character, theme, and craft into the flow.
-- **WORD LIMIT:** 1000-1200 words.
-
-Now, guide me through the story of the book: **{{ITEM_NAME}}**
-`;
+export const validateApiKey = async (apiKey: string): Promise<boolean> => {
+    if (!apiKey) return false;
+    try {
+        const ai = getAiClient(apiKey);
+        // Use a lightweight model and short prompt for validation to minimize cost/time
+        await ai.models.generateContent({ model: "gemini-2.5-flash", contents: "test" });
+        return true;
+    } catch (error: any) {
+        console.error("API Key validation failed:", error);
+        // More specific error checking
+        if (error.message.includes('API key not valid') || error.message.includes('permission denied') || error.message.includes('API_KEY_INVALID')) {
+            return false;
+        }
+        // It might be a network error, but for this app's purpose, we treat it as a validation failure.
+        return false;
+    }
+};
 
 const movieSchema = {
     type: Type.OBJECT,
@@ -67,6 +45,7 @@ const movieSchema = {
         runningTime: { type: Type.STRING, description: "e.g., '148 minutes'", nullable: true },
         adaptedFrom: { type: Type.STRING, nullable: true },
         producer: { type: Type.ARRAY, items: { type: Type.STRING } },
+        trailerUrl: { type: Type.STRING, nullable: true, description: "A direct, publicly accessible URL to the official movie trailer (e.g., YouTube)." },
         budget: { type: Type.STRING, nullable: true },
         boxOffice: { type: Type.STRING, nullable: true },
         cast: {
@@ -99,21 +78,58 @@ const bookSchema = {
     required: ['title', 'author', 'genres', 'publicationDate']
 };
 
+const browseListSchema = {
+    type: Type.ARRAY,
+    items: {
+        type: Type.OBJECT,
+        properties: {
+            title: { type: Type.STRING },
+            year: { type: Type.STRING, description: "The release or publication year as a string." },
+            coverUrl: { type: Type.STRING, description: "A high-quality, publicly accessible direct image URL for the cover/poster." }
+        },
+        required: ['title', 'year', 'coverUrl']
+    }
+};
+
+export const getBrowseList = async (itemType: 'movie' | 'book', apiKey: string, existingTitles: string[]): Promise<BrowseItem[]> => {
+    const ai = getAiClient(apiKey);
+    const avoidClause = existingTitles.length > 0
+        ? ` IMPORTANT: Do not include any of the following titles in your response: ${existingTitles.join(', ')}.`
+        : '';
+
+    const prompt = `
+        List 12 popular and critically acclaimed ${itemType}s that are not on the provided exclusion list. They should be a mix of recent hits and timeless classics.
+        ${avoidClause}
+        For each ${itemType}, provide its title, release/publication year, and a valid, publicly accessible URL for its cover image.
+        Respond strictly in the JSON format defined by the schema. If you cannot find 12 new and distinct titles, return as many as you can find.
+    `;
+    
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: browseListSchema,
+            },
+        });
+        const jsonText = response.text?.trim() || '[]';
+        return JSON.parse(jsonText);
+    } catch (error) {
+        console.error(`Error fetching browse list for ${itemType}:`, error);
+        return []; // Fail gracefully
+    }
+};
 
 const getCoverUrl = async (itemName: string, itemType: 'movie' | 'book', year: string | undefined, apiKey: string): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getAiClient(apiKey);
   const yearInfo = year ? `(${year})` : '';
   const prompt = `
     TASK: Find the most reliable, high-resolution, publicly accessible direct image URL for the official cover/poster of the ${itemType} "${itemName}" ${yearInfo}.
-
     INSTRUCTIONS:
-    1.  **Prioritize Official Sources:** 
-        - For movies, use Google Search to find the movie on The Movie Database (TMDb) or IMDb.
-        - For books, use Google Search to find the book on Goodreads, Publisher's website, or Google Books.
-    2.  **Construct URL:** If possible, construct the full image URL using a high-resolution path from the source (e.g., TMDb's '/original/' path).
-    3.  **URL Verification:** The final URL MUST be a direct link to an image file (e.g., .jpg, .png, .webp) and NOT to a webpage.
-    4.  **No Unreliable Sources:** Do NOT use URLs from fan wikis, blogs, or other non-reputable sources.
-    5.  **Output:** Return ONLY the single, complete, valid URL. If no reliable URL is found, return an empty string.
+    1.  Use Google Search to find the item on an official source (TMDb, IMDb for movies; Goodreads, Google Books for books).
+    2.  Construct a full, high-resolution, direct image URL (e.g., ending in .jpg, .png).
+    3.  Output ONLY the single, complete, valid URL. If none is found, return an empty string.
   `;
 
   try {
@@ -130,40 +146,28 @@ const getCoverUrl = async (itemName: string, itemType: 'movie' | 'book', year: s
 };
 
 const getItemDetails = async (itemName: string, year: string | undefined, itemType: 'movie' | 'book', apiKey: string): Promise<MovieDetails | BookDetails> => {
-    const ai = new GoogleGenAI({ apiKey });
+    const ai = getAiClient(apiKey);
     const yearInfo = year ? ` released around ${year}` : '';
-
-    // Step 1: Use Google Search to gather grounded, real-time information.
     const searchPrompt = `
       Perform a comprehensive Google Search for the ${itemType} "${itemName}"${yearInfo}. 
-      Gather key information including:
-      - For Movies: Full title, director, screenplay, cinematography, producers, cast (top 6 actors and their characters), release date, genres, running time, source material (if adapted), budget, box office, and ratings from IMDb, Rotten Tomatoes, and Letterboxd.
-      - For Books: Full title, author, publisher, publication date, genres, page count, and any major awards won.
+      Gather key information for the most relevant result, including a direct URL to its official trailer if it's a movie.
       Summarize your findings as a block of text. This information will be used to populate a data structure.
     `;
 
     const searchResult = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: searchPrompt,
-        config: {
-            tools: [{ googleSearch: {} }],
-        },
+        config: { tools: [{ googleSearch: {} }] },
     });
     
     const context = searchResult.text;
     if (!context || context.trim().length < 20) {
         throw new Error(`Could not find sufficient information for "${itemName}" via Google Search.`);
     }
-
-    // Step 2: Use the grounded context to generate a structured JSON response.
     const extractionPrompt = `
       Based *only* on the following context, extract the requested information and format it precisely according to the provided JSON schema. 
-      Do not use any prior knowledge. If a piece of information is not present in the context, use a null value for that field. For cast, list the top 6 most prominent actors mentioned.
-
-      CONTEXT:
-      ---
-      ${context}
-      ---
+      Do not use any prior knowledge. If info is not present, use a null value. For cast, list the top 6 actors.
+      CONTEXT: --- ${context} ---
     `;
 
     const response = await ai.models.generateContent({
@@ -177,36 +181,36 @@ const getItemDetails = async (itemName: string, year: string | undefined, itemTy
 
     try {
         const jsonText = response.text?.trim() || '{}';
-        if (jsonText === '{}') {
-            throw new Error(`Could not extract ${itemType} details from the search results.`);
-        }
+        if (jsonText === '{}') throw new Error(`Could not extract ${itemType} details from the search results.`);
         return JSON.parse(jsonText);
     } catch (e) {
         console.error(`Failed to parse ${itemType} details JSON:`, e, `Raw response: "${response.text}"`);
-        throw new Error(`Could not structure the ${itemType} details. The format was invalid.`);
+        throw new Error(`Could not structure the ${itemType} details.`);
     }
 };
 
-const getItemNarration = async (itemName: string, year: string | undefined, itemType: 'movie' | 'book', apiKey: string): Promise<string> => {
-    const ai = new GoogleGenAI({ apiKey });
+export async function* getItemNarrationStream(itemName: string, year: string | undefined, itemType: 'movie' | 'book', apiKey: string) {
+    const ai = getAiClient(apiKey);
     const promptTemplate = itemType === 'movie' ? MOVIE_NARRATION_PROMPT : BOOK_NARRATION_PROMPT;
     const finalPrompt = promptTemplate
         .replace(/{{ITEM_NAME}}/g, itemName)
         .replace('{{YEAR}}', year || 'N/A');
 
-    const response = await ai.models.generateContent({
+    const response = await ai.models.generateContentStream({
         model: 'gemini-2.5-pro',
         contents: finalPrompt,
         config: { thinkingConfig: { thinkingBudget: 32768 } }
     });
+    
+    for await (const chunk of response) {
+        yield chunk.text;
+    }
+}
 
-    return response.text?.trim() || '';
-};
-
-export const getItemData = async (itemName: string, year: string | undefined, itemType: 'movie' | 'book', apiKey: string): Promise<ItemData> => {
-    const [detailsResult, narrationResult, coverUrlResult] = await Promise.allSettled([
+// This function now only gets the details and cover. Narration is streamed separately.
+export const getItemData = async (itemName: string, year: string | undefined, itemType: 'movie' | 'book', apiKey: string): Promise<Omit<ItemData, 'narration'>> => {
+    const [detailsResult, coverUrlResult] = await Promise.allSettled([
         getItemDetails(itemName, year, itemType, apiKey),
-        getItemNarration(itemName, year, itemType, apiKey),
         getCoverUrl(itemName, itemType, year, apiKey),
     ]);
 
@@ -214,35 +218,23 @@ export const getItemData = async (itemName: string, year: string | undefined, it
         console.error(`Error fetching ${itemType} details:`, detailsResult.reason);
         throw new Error(`We could not find details for that ${itemType}. Please check the title and year and try again.`);
     }
-
     const detailsWithoutCover = detailsResult.value;
     if (!detailsWithoutCover || !detailsWithoutCover.title) {
          throw new Error(`We could not find details for that ${itemType}. Please check the title and try again.`);
     }
-
-    if (narrationResult.status === 'rejected') {
-        console.error("Error generating narration:", narrationResult.reason);
-        throw new Error(`We were unable to generate a narration for this ${itemType} at this time.`);
-    }
-    
-    const narration = narrationResult.value;
-    if (!narration || narration.trim().length < 100) {
-        throw new Error(`We were unable to generate a sufficient narration for this ${itemType}.`);
-    }
     
     const coverUrl = coverUrlResult.status === 'fulfilled' ? coverUrlResult.value : '';
-
     const details = { ...detailsWithoutCover, coverUrl };
 
     if (itemType === 'movie') {
-        return { type: 'movie', details: details as MovieDetails, narration };
+        return { type: 'movie', details: details as MovieDetails };
     } else {
-        return { type: 'book', details: details as BookDetails, narration };
+        return { type: 'book', details: details as BookDetails };
     }
 };
 
 export const getNarrationAudio = async (text: string, apiKey: string): Promise<string> => {
-    const ai = new GoogleGenAI({ apiKey });
+    const ai = getAiClient(apiKey);
     const response = await ai.models.generateContent({
         model: "gemini-2.5-flash-preview-tts",
         contents: [{ parts: [{ text: `Say with a calm and engaging tone: ${text}` }] }],
@@ -251,7 +243,6 @@ export const getNarrationAudio = async (text: string, apiKey: string): Promise<s
             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
         },
     });
-
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     if (!base64Audio) {
         throw new Error("Could not generate audio from the narration.");
